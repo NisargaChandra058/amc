@@ -1,6 +1,10 @@
 <?php
+// --- THIS IS THE FIX ---
+// Tell PHP to use the same writable session folder as your other pages
 session_save_path('/var/www/sessions');
 session_start();
+// --- END OF FIX ---
+
 require_once('db.php'); // Use PDO connection
 
 // Check if student is logged in
@@ -90,15 +94,19 @@ try {
 
     <div class="container">
         <?php if (!empty($message)): ?>
-            <div class="message-container"><?= $message ?></div>
+            <!-- Show the message container -->
+            <div class="message <?= (strpos($message, 'success') !== false) ? 'success' : 'error' ?>">
+                <?= $message ?>
+            </div>
         <?php else: ?>
+            <!-- Show the test container -->
             <div class="question-paper">
                 <h1><?= htmlspecialchars($test['title']) ?></h1>
                 <hr style="margin: 15px 0;">
                 <div class="content"><?= nl2br(htmlspecialchars($test['content'])) ?></div>
             </div>
 
-            <form method="POST">
+            <form method="POST" action="take-test.php?id=<?= htmlspecialchars($test_id) ?>">
                 <label for="answers" style="font-weight: bold; font-size: 1.2em; margin-top: 20px; display: block;">Your Answers:</label>
                 <textarea id="answers" name="answers" placeholder="Type your answers here..."></textarea>
                 <button type="submit">Submit Test</button>
