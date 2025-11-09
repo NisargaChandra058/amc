@@ -3,92 +3,48 @@ error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
 session_start();
-require_once('db.php'); // Make sure this connects to PostgreSQL via PDO
+require_once('db.php'); // Your PDO connection
 
-// --- Check if student is logged in ---
+// Check if student is logged in
 if (!isset($_SESSION['student_id'])) {
     header('Location: student-login.php');
     exit;
 }
 
 $student_id = $_SESSION['student_id'];
-
-// --- Ensure test ID ---
 $test_id = filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);
+$message = '';
 
-// --- Setup tables and sample test ---
+if (!$test_id) {
+    die("Invalid Test ID specified.");
+}
+
 try {
-    // Create question_papers table
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS question_papers (
-            id SERIAL PRIMARY KEY,
-            title VARCHAR(255) NOT NULL,
-            content TEXT NOT NULL,
-            staff_id INT DEFAULT 1,
-            subject_id INT DEFAULT 1
-        )
-    ");
+    // Handle Test Submission
+    if ($_SERVER["REQUEST_METHOD"] == "POST") {
+        $answers = $_POST['answers'] ?? [];
+        $answers_json = json_encode($answers); // Store as JSON
 
-    // Create ia_results table
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS ia_results (
-            id SERIAL PRIMARY KEY,
-            student_id INT NOT NULL,
-            qp_id INT NOT NULL,
-            marks INT,
-            content TEXT,
-            UNIQUE(student_id, qp_id)
-        )
-    ");
-
-    // Insert a sample test if none exists
-    $stmt = $pdo->query("SELECT COUNT(*) FROM question_papers");
-    if ($stmt->fetchColumn() == 0) {
-        $pdo->exec("
-            INSERT INTO question_papers (title, content, staff_id, subject_id)
-            VALUES (
-                'Sample Test',
-                '1. What is PHP?\n2. Explain sessions.\n3. Write a SQL query to select all students.',
-                1,
-                1
-            )
-        ");
-    }
-
-    // If no ID provided, pick first test automatically
-    if (!$test_id) {
-        $stmt = $pdo->query("SELECT id FROM question_papers ORDER BY id ASC LIMIT 1");
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        $test_id = $row['id'] ?? 0;
-    }
-
-    if (!$test_id) {
-        die("No test available.");
-    }
-
-    // --- Handle test submission ---
-    $message = '';
-    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        $answers = $_POST['answers'] ?? 'No answer provided.';
-        $marks = rand(70, 95); // placeholder marks
+        $marks = rand(70, 95); // Placeholder: random marks
 
         $sql = "INSERT INTO ia_results (student_id, qp_id, marks, content)
                 VALUES (:student_id, :qp_id, :marks, :content)
-                ON CONFLICT (student_id, qp_id)
-                DO UPDATE SET marks = EXCLUDED.marks, content = EXCLUDED.content";
+                ON CONFLICT (student_id, qp_id) DO UPDATE SET
+                marks = EXCLUDED.marks, content = EXCLUDED.content";
+
         $stmt = $pdo->prepare($sql);
         $stmt->execute([
             ':student_id' => $student_id,
             ':qp_id' => $test_id,
             ':marks' => $marks,
-            ':content' => $answers
+            ':content' => $answers_json
         ]);
 
-        $message = "<p style='color:green;'>Test submitted successfully! <a href='dashboard.php'>Back to Dashboard</a></p>";
+        $message = "<p class='message success'>Your test has been submitted successfully! <a href='student-dashboard.php'>Back to Dashboard</a></p>";
     }
 
-    // --- Fetch test content ---
-    $stmt = $pdo->prepare("SELECT * FROM question_papers WHERE id = :id");
+    // Fetch Test Content
+    $stmt = $pdo->prepare("SELECT title, content FROM question_papers WHERE id = :id");
     $stmt->execute([':id' => $test_id]);
     $test = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -96,17 +52,21 @@ try {
         die("Test not found.");
     }
 
-    // --- Check if already submitted ---
-    $stmt = $pdo->prepare("SELECT id FROM ia_results WHERE student_id = :student_id AND qp_id = :qp_id");
-    $stmt->execute([':student_id' => $student_id, ':qp_id' => $test_id]);
-    $submitted = $stmt->fetch();
+    // Decode JSON content
+    $questions = json_decode($test['content'], true);
+    if (!is_array($questions)) {
+        die("Invalid test format.");
+    }
 
-    if ($submitted) {
-        $message = "<p style='color:red;'>You have already submitted this test. <a href='dashboard.php'>Back to Dashboard</a></p>";
+    // Check if test already submitted
+    $check_stmt = $pdo->prepare("SELECT id FROM ia_results WHERE student_id = :student_id AND qp_id = :qp_id");
+    $check_stmt->execute([':student_id' => $student_id, ':qp_id' => $test_id]);
+    if ($check_stmt->fetch()) {
+        $message = "<p class='message error'>You have already submitted this test. <a href='student-dashboard.php'>Back to Dashboard</a></p>";
     }
 
 } catch (PDOException $e) {
-    die("Database error: " . $e->getMessage());
+    die("Database error: " . htmlspecialchars($e->getMessage()));
 }
 ?>
 
@@ -116,30 +76,40 @@ try {
 <meta charset="UTF-8">
 <title>Take Test: <?= htmlspecialchars($test['title']) ?></title>
 <style>
-body { font-family: Arial, sans-serif; padding: 20px; background: #f0f0f0; }
-.container { max-width: 800px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; }
-textarea { width: 100%; height: 200px; }
-button { padding: 10px 20px; margin-top: 10px; }
-.message { font-weight: bold; margin-bottom: 15px; }
+body { font-family: sans-serif; background: #2b2d42; color: #edf2f4; padding: 20px; }
+.container { max-width: 800px; margin: auto; background: #333; padding: 20px; border-radius: 8px; }
+.question { margin-bottom: 20px; padding: 10px; background: #444; border-radius: 5px; }
+.question h3 { margin: 0 0 10px 0; }
+button { padding: 10px 20px; font-size: 16px; background: #d90429; color: #edf2f4; border: none; border-radius: 5px; cursor: pointer; }
+.message { padding: 10px; margin-bottom: 20px; border-radius: 5px; }
+.success { background: #d4edda; color: #155724; }
+.error { background: #f8d7da; color: #721c24; }
 </style>
 </head>
 <body>
+<a href="student-dashboard.php" style="color:#edf2f4;">&laquo; Back to Dashboard</a>
 <div class="container">
-    <a href="dashboard.php">&laquo; Back to Dashboard</a>
-    <h1><?= htmlspecialchars($test['title']) ?></h1>
-    <div style="border:1px solid #ccc; padding:15px; margin-bottom:20px;">
-        <?= nl2br(htmlspecialchars($test['content'])) ?>
+<?php if ($message): ?>
+    <div class="message <?= (strpos($message, 'success') !== false) ? 'success' : 'error' ?>">
+        <?= $message ?>
     </div>
-
-    <?php if ($message): ?>
-        <div class="message"><?= $message ?></div>
-    <?php elseif (!$submitted): ?>
-        <form method="POST">
-            <label for="answers">Your Answers:</label><br>
-            <textarea name="answers" id="answers" placeholder="Type your answers here..."></textarea><br>
-            <button type="submit">Submit Test</button>
-        </form>
-    <?php endif; ?>
+<?php else: ?>
+    <h1><?= htmlspecialchars($test['title']) ?></h1>
+    <form method="POST">
+        <?php foreach ($questions as $index => $q): ?>
+            <div class="question">
+                <h3><?= ($index+1) . '. ' . htmlspecialchars($q['question']) ?></h3>
+                <?php foreach ($q['options'] as $key => $value): ?>
+                    <label>
+                        <input type="radio" name="answers[<?= $index ?>]" value="<?= htmlspecialchars($key) ?>">
+                        <?= htmlspecialchars($key . '. ' . $value) ?>
+                    </label><br>
+                <?php endforeach; ?>
+            </div>
+        <?php endforeach; ?>
+        <button type="submit">Submit Test</button>
+    </form>
+<?php endif; ?>
 </div>
 </body>
 </html>
