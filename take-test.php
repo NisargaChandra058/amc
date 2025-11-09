@@ -1,204 +1,41 @@
 <?php
-// ---------------- SESSION SETUP ----------------
+// ---- Session setup ----
 session_save_path('/var/www/sessions');
 session_start();
 
-// ---------------- DATABASE CONNECTION ----------------
-require_once('db.php'); // PDO connection
+require_once('db.php');
 
-// ---------------- LOGIN CHECK ----------------
+// ---- Check login ----
 if (!isset($_SESSION['student_id'])) {
-    header('Location: student-login.php');
-    exit;
+    die("Session not found! You were redirected to login. 
+        <br><a href='student-login.php'>Go to Login</a>");
 }
 
 $student_id = $_SESSION['student_id'];
 $test_id = filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);
-$message = '';
 
 if (!$test_id) {
-    die("Invalid Test ID specified.");
+    die("Invalid test ID.");
 }
 
-try {
-    // ---------------- HANDLE TEST SUBMISSION ----------------
-    if ($_SERVER["REQUEST_METHOD"] === "POST") {
-        $answers = trim($_POST['answers'] ?? '');
-        if ($answers === '') {
-            $message = "<p class='message error'>Please enter your answers before submitting.</p>";
-        } else {
-            $marks = rand(70, 95); // Placeholder grading
-
-            $sql = "INSERT INTO ia_results (student_id, qp_id, marks, content) 
-                    VALUES (:student_id, :qp_id, :marks, :content)
-                    ON CONFLICT (student_id, qp_id) DO UPDATE 
-                    SET marks = EXCLUDED.marks, content = EXCLUDED.content";
-
-            $stmt = $pdo->prepare($sql);
-            $stmt->execute([
-                ':student_id' => $student_id,
-                ':qp_id' => $test_id,
-                ':marks' => $marks,
-                ':content' => $answers
-            ]);
-
-            $message = "<p class='message success'>
-                            Your test has been submitted successfully! 
-                            <a href='student-dashboard.php'>Back to Dashboard</a>
-                        </p>";
-        }
-    }
-
-    // ---------------- FETCH TEST CONTENT ----------------
-    $stmt = $pdo->prepare("SELECT title, content FROM question_papers WHERE id = :id");
-    $stmt->execute([':id' => $test_id]);
-    $test = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    if (!$test) {
-        die("Test not found.");
-    }
-
-    // ---------------- CHECK IF ALREADY SUBMITTED ----------------
-    $check_stmt = $pdo->prepare("
-        SELECT id FROM ia_results 
-        WHERE student_id = :student_id AND qp_id = :qp_id
-    ");
-    $check_stmt->execute([
-        ':student_id' => $student_id,
-        ':qp_id' => $test_id
-    ]);
-
-    if ($check_stmt->fetch() && $_SERVER["REQUEST_METHOD"] !== "POST") {
-        $message = "<p class='message error'>
-                        You have already submitted this test. 
-                        <a href='student-dashboard.php'>Back to Dashboard</a>
-                    </p>";
-    }
-
-} catch (PDOException $e) {
-    die("Database error: " . htmlspecialchars($e->getMessage()));
+// ---- Fetch test ----
+$stmt = $pdo->prepare("SELECT title, content FROM question_papers WHERE id = :id");
+$stmt->execute([':id' => $test_id]);
+$test = $stmt->fetch(PDO::FETCH_ASSOC);
+if (!$test) {
+    die("Test not found.");
 }
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Take Test: <?= htmlspecialchars($test['title']) ?></title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        :root {
-            --space-cadet: #2b2d42;
-            --cool-gray: #8d99ae;
-            --antiflash-white: #edf2f4;
-            --red-pantone: #ef233c;
-            --fire-engine-red: #d90429;
-        }
-        body {
-            font-family: 'Segoe UI', sans-serif;
-            margin: 0;
-            padding: 20px;
-            background: var(--space-cadet);
-            color: var(--antiflash-white);
-        }
-        .back-link {
-            display: block;
-            max-width: 1000px;
-            margin: 0 auto 20px auto;
-            text-align: right;
-            font-weight: bold;
-            color: var(--antiflash-white);
-            text-decoration: none;
-        }
-        .back-link:hover { text-decoration: underline; }
-        .container {
-            max-width: 1000px;
-            margin: 20px auto;
-            padding: 30px;
-            background: rgba(141, 153, 174, 0.1);
-            border-radius: 15px;
-            border: 1px solid rgba(141, 153, 174, 0.2);
-        }
-        .question-paper {
-            background: #fff;
-            color: #333;
-            padding: 30px;
-            border-radius: 8px;
-        }
-        .question-paper h1 { margin-top: 0; }
-        .question-paper .content {
-            font-size: 1.1em;
-            line-height: 1.7;
-            white-space: pre-wrap;
-        }
-        textarea {
-            width: 100%;
-            min-height: 200px;
-            padding: 10px;
-            font-size: 1em;
-            border: 1px solid var(--cool-gray);
-            border-radius: 5px;
-            margin-top: 20px;
-        }
-        button {
-            padding: 12px 20px;
-            border: none;
-            border-radius: 5px;
-            background-color: var(--fire-engine-red);
-            color: var(--antiflash-white);
-            font-weight: bold;
-            cursor: pointer;
-            width: 100%;
-            font-size: 1.1em;
-            margin-top: 20px;
-        }
-        button:hover { background-color: var(--red-pantone); }
-        .message {
-            padding: 10px;
-            border-radius: 5px;
-            margin-bottom: 1em;
-            text-align: center;
-            font-weight: bold;
-        }
-        .success {
-            background-color: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        .error {
-            background-color: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        .message a {
-            color: #0056b3;
-            font-weight: bold;
-        }
-    </style>
-</head>
+<head><meta charset="UTF-8"><title>Take Test</title></head>
 <body>
-    <a href="student-dashboard.php" class="back-link">&laquo; Back to Dashboard</a>
-
-    <div class="container">
-        <?php if (!empty($message)): ?>
-            <div class="message <?= (strpos($message, 'success') !== false) ? 'success' : 'error' ?>">
-                <?= $message ?>
-            </div>
-        <?php else: ?>
-            <div class="question-paper">
-                <h1><?= htmlspecialchars($test['title']) ?></h1>
-                <hr style="margin: 15px 0;">
-                <div class="content"><?= nl2br(htmlspecialchars($test['content'])) ?></div>
-            </div>
-
-            <form method="POST" action="take-test.php?id=<?= htmlspecialchars($test_id) ?>">
-                <label for="answers" style="font-weight: bold; font-size: 1.2em; margin-top: 20px; display: block;">
-                    Your Answers:
-                </label>
-                <textarea id="answers" name="answers" placeholder="Type your answers here..."></textarea>
-                <button type="submit">Submit Test</button>
-            </form>
-        <?php endif; ?>
-    </div>
+    <h2>Welcome Student #<?= htmlspecialchars($student_id) ?></h2>
+    <h3><?= htmlspecialchars($test['title']) ?></h3>
+    <p><?= nl2br(htmlspecialchars($test['content'])) ?></p>
+    <form method="POST">
+        <textarea name="answers" cols="50" rows="5"></textarea><br>
+        <button type="submit">Submit</button>
+    </form>
 </body>
 </html>
