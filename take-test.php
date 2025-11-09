@@ -1,85 +1,123 @@
 <?php
-session_save_path('/var/www/sessions');
-session_start();
-require_once('db.php'); // Use PDO connection
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 
-// --- Security Check (Placeholder) ---
-/*
-if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
-    header("Location: login.php");
+session_start();
+require_once('db.php'); // Make sure this connects to PostgreSQL via PDO
+
+// --- Check if student is logged in ---
+if (!isset($_SESSION['student_id'])) {
+    header('Location: student-login.php');
     exit;
 }
-*/
 
-$student_id = filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);
-$student = null;
-$message = '';
+$student_id = $_SESSION['student_id'];
 
-if (!$student_id) {
-    die("Invalid student ID.");
-}
+// --- Ensure test ID ---
+$test_id = filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);
 
-// --- Handle Form Update ---
-if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['update_student'])) {
-    // Retrieve and sanitize form data
-    $usn = trim(htmlspecialchars($_POST['usn'], ENT_QUOTES, 'UTF-8'));
-    $name = trim(htmlspecialchars($_POST['student_name'], ENT_QUOTES, 'UTF-8'));
-    $email = trim(htmlspecialchars($_POST['email'], ENT_QUOTES, 'UTF-8'));
-    $semester = filter_input(INPUT_POST, 'semester', FILTER_VALIDATE_INT);
-    $section = trim(htmlspecialchars($_POST['section'], ENT_QUOTES, 'UTF-8'));
-
-    if (empty($usn) || empty($name) || empty($email) || empty($semester) || empty($section)) {
-        $message = "<p class='message error'>All fields are required!</p>";
-    } else {
-        try {
-            // Check for duplicate USN or Email, excluding the current student
-            $check_stmt = $pdo->prepare("SELECT id FROM students WHERE (usn = :usn OR email = :email) AND id != :id LIMIT 1");
-            $check_stmt->execute([':usn' => $usn, ':email' => $email, ':id' => $student_id]);
-            
-            if ($check_stmt->fetch()) {
-                $message = "<p class='message error'>Error: USN or Email is already in use by another student.</p>";
-            } else {
-                // Update the student record
-                $sql = "UPDATE students SET 
-                            usn = :usn, 
-                            student_name = :student_name, 
-                            email = :email, 
-                            semester = :semester,
-                            section = :section
-                        WHERE id = :id";
-                
-                $update_stmt = $pdo->prepare($sql);
-                $update_stmt->execute([
-                    ':usn' => $usn,
-                    ':student_name' => $name,
-                    ':email' => $email,
-                    ':semester' => $semester,
-                    ':section' => $section,
-                    ':id' => $student_id
-                ]);
-                
-                $message = "<p class='message success'>Student details updated successfully!</p>";
-            }
-        } catch (PDOException $e) {
-            $message = "<p class='message error'>Database error: " . $e->getMessage() . "</p>";
-        }
-    }
-}
-
-// --- Fetch Student Details for the Form ---
+// --- Setup tables and sample test ---
 try {
-    // --- THIS IS THE FIX ---
-    // Changed `name` to `student_name`
-    $stmt = $pdo->prepare("SELECT id, usn, student_name, email, semester, section FROM students WHERE id = :id");
-    // --- END OF FIX ---
-    
-    $stmt->bindParam(':id', $student_id, PDO::PARAM_INT);
-    $stmt->execute();
-    $student = $stmt->fetch(PDO::FETCH_ASSOC);
+    // Create question_papers table
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS question_papers (
+            id SERIAL PRIMARY KEY,
+            title VARCHAR(255) NOT NULL,
+            content TEXT NOT NULL,
+            staff_id INT DEFAULT 1,
+            subject_id INT DEFAULT 1
+        )
+    ");
 
-    if (!$student && empty($message)) { // Only show "not found" if there isn't already another message
-        $message = "<p class='message error'>No student record found.</p>";
+    // Create ia_results table
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS ia_results (
+            id SERIAL PRIMARY KEY,
+            student_id INT NOT NULL,
+            qp_id INT NOT NULL,
+            marks INT,
+            content TEXT,
+            UNIQUE(student_id, qp_id)
+        )
+    ");
+
+    // Insert a sample test if none exists
+    $stmt = $pdo->query("SELECT COUNT(*) FROM question_papers");
+    if ($stmt->fetchColumn() == 0) {
+        $pdo->exec("
+            INSERT INTO question_papers (title, content, staff_id, subject_id)
+            VALUES (
+                'Sample Test',
+                '1. What is PHP?\n2. Explain sessions.\n3. Write a SQL query to select all students.',
+                1,
+                1
+            )
+        ");
     }
+
+    // If no ID provided, pick first test automatically
+    if (!$test_id) {
+        $stmt = $pdo->query("SELECT id FROM question_papers ORDER BY id ASC LIMIT 1");
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        $test_id = $row['id'] ?? 0;
+    }
+
+    if (!$test_id) {
+        die("No test available.");
+    }
+
+    // --- Fetch test content ---
+    $stmt = $pdo->prepare("SELECT * FROM question_papers WHERE id = :id");
+    $stmt->execute([':id' => $test_id]);
+    $test = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$test) {
+        die("Test not found.");
+    }
+
+    // Decode the JSON content into questions array
+    $questions = json_decode($test['content'], true);
+    if (!$questions || !is_array($questions)) {
+        die("Invalid test content.");
+    }
+
+    // --- Check if already submitted ---
+    $stmt = $pdo->prepare("SELECT id FROM ia_results WHERE student_id = :student_id AND qp_id = :qp_id");
+    $stmt->execute([':student_id' => $student_id, ':qp_id' => $test_id]);
+    $submitted = $stmt->fetch();
+
+    // --- Handle test submission ---
+    $message = '';
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$submitted) {
+        $answers = $_POST['answers'] ?? [];
+        // Calculate marks based on correct answers
+        $total_marks = 0;
+        $max_marks = count($questions);
+        foreach ($questions as $index => $question) {
+            $user_answer = $answers[$index] ?? '';
+            if ($user_answer === $question['correct']) {
+                $total_marks += $question['marks'];
+            }
+        }
+
+        $answers_json = json_encode($answers);
+
+        $sql = "INSERT INTO ia_results (student_id, qp_id, marks, content)
+                VALUES (:student_id, :qp_id, :marks, :content)
+                ON CONFLICT (student_id, qp_id)
+                DO UPDATE SET marks = EXCLUDED.marks, content = EXCLUDED.content";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([
+            ':student_id' => $student_id,
+            ':qp_id' => $test_id,
+            ':marks' => $total_marks,
+            ':content' => $answers_json
+        ]);
+
+        $message = "<p style='color:green;'>Test submitted successfully! You scored {$total_marks}/{$max_marks}. <a href='dashboard.php'>Back to Dashboard</a></p>";
+        $submitted = true; // Mark as submitted to prevent further display
+    }
+
 } catch (PDOException $e) {
     die("Database error: " . $e->getMessage());
 }
@@ -88,75 +126,44 @@ try {
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Edit Student Details</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        /* Reusing styles from admin.php */
-        :root { --space-cadet: #2b2d42; --cool-gray: #8d99ae; --antiflash-white: #edf2f4; --red-pantone: #ef233c; --fire-engine-red: #d90429; }
-        body { font-family: 'Segoe UI', sans-serif; margin: 0; padding: 20px; background: var(--space-cadet); color: var(--antiflash-white); }
-        .back-link { display: block; max-width: 860px; margin: 0 auto 20px auto; text-align: right; font-weight: bold; color: var(--antiflash-white); text-decoration: none; }
-        .back-link:hover { text-decoration: underline; }
-        .container { max-width: 600px; margin: 20px auto; padding: 30px; background: rgba(141, 153, 174, 0.1); border-radius: 15px; border: 1px solid rgba(141, 153, 174, 0.2); }
-        h2 { text-align: center; margin-bottom: 20px; }
-        form { display: flex; flex-direction: column; gap: 10px; }
-        .form-row { display: flex; gap: 10px; }
-        .form-row .form-group { flex: 1; }
-        label { display: block; margin-bottom: 5px; font-weight: 600; }
-        input[type="text"], input[type="email"], select {
-            width: 100%; padding: 10px; margin-bottom: 10px; border-radius: 5px; border: 1px solid var(--cool-gray); background: rgba(43, 45, 66, 0.5); color: var(--antiflash-white); box-sizing: border-box;
-        }
-        button { padding: 12px 20px; border: none; border-radius: 5px; background-color: var(--fire-engine-red); color: var(--antiflash-white); font-weight: bold; cursor: pointer; width: 100%; font-size: 1.1em; margin-top: 10px; }
-        button:hover { background-color: var(--red-pantone); }
-        .message { padding: 10px; border-radius: 5px; margin-bottom: 1em; text-align: center; font-weight: bold; }
-        .success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-        .error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-    </style>
+<meta charset="UTF-8">
+<title>Take Test: <?= htmlspecialchars($test['title']) ?></title>
+<style>
+body { font-family: Arial, sans-serif; padding: 20px; background: #f0f0f0; }
+.container { max-width: 800px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; }
+.question { margin-bottom: 20px; padding: 10px; border: 1px solid #ddd; }
+.options { margin-left: 20px; }
+button { padding: 10px 20px; margin-top: 10px; }
+.message { font-weight: bold; margin-bottom: 15px; }
+</style>
 </head>
 <body>
-    <a href="view-students.php" class="back-link">&laquo; Back to Students List</a>
-    <div class="container">
-        <h2>Edit Student Details</h2>
-        <?php if (!empty($message)) echo $message; ?>
+<div class="container">
+    <a href="dashboard.php">&laquo; Back to Dashboard</a>
+    <h1><?= htmlspecialchars($test['title']) ?></h1>
 
-        <?php if ($student): ?>
-        <form action="edit-student.php?id=<?= htmlspecialchars($student_id) ?>" method="POST">
-            <label for="usn">USN:</label>
-            <input type="text" id="usn" name="usn" value="<?= htmlspecialchars($student['usn'] ?? '') ?>" required>
-
-            <label for="student_name">Full Name:</label>
-            <input type="text" id="student_name" name="student_name" value="<?= htmlspecialchars($student['student_name'] ?? '') ?>" required>
-
-            <label for="email">Email:</label>
-            <input type="email" id="email" name="email" value="<?= htmlspecialchars($student['email'] ?? '') ?>" required>
-            
-            <div class="form-row">
-                <div class="form-group">
-                    <label for="semester">Semester:</label>
-                    <select id="semester" name="semester" required>
-                        <option value="">-- Select --</option>
-                        <?php for ($i = 1; $i <= 8; $i++): ?>
-                            <option value="<?= $i ?>" <?= ($student['semester'] == $i) ? 'selected' : '' ?>>Semester <?= $i ?></option>
-                        <?php endfor; ?>
-                    </select>
+    <?php if ($message): ?>
+        <div class="message"><?= $message ?></div>
+    <?php elseif ($submitted): ?>
+        <div class="message"><p style='color:red;'>You have already submitted this test. <a href='dashboard.php'>Back to Dashboard</a></p></div>
+    <?php else: ?>
+        <form method="POST">
+            <?php foreach ($questions as $index => $question): ?>
+                <div class="question">
+                    <p><strong>Question <?= $index + 1 ?>:</strong> <?= htmlspecialchars($question['question']) ?> (<?= $question['marks'] ?> mark<?= $question['marks'] > 1 ? 's' : '' ?>)</p>
+                    <div class="options">
+                        <?php foreach ($question['options'] as $key => $option): ?>
+                            <label>
+                                <input type="radio" name="answers[<?= $index ?>]" value="<?= htmlspecialchars($key) ?>" required>
+                                <?= htmlspecialchars($key) ?>. <?= htmlspecialchars($option) ?>
+                            </label><br>
+                        <?php endforeach; ?>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label for="section">Section:</label>
-                    <select id="section" name="section" required>
-                        <option value="">-- Select --</option>
-                        <option value="A" <?= ($student['section'] == 'A') ? 'selected' : '' ?>>A Section</option>
-                        <option value="B" <?= ($student['section'] == 'B') ? 'selected' : '' ?>>B Section</option>
-                        <option value="C" <?= ($student['section'] == 'C') ? 'selected' : '' ?>>C Section</option>
-                        <option value="D" <?= ($student['section'] == 'D') ? 'selected' : '' ?>>D Section</option>
-                    </select>
-                </div>
-            </div>
-
-            <button type="submit" name="update_student">Update Details</button>
+            <?php endforeach; ?>
+            <button type="submit">Submit Test</button>
         </form>
-        <?php else: ?>
-            <p style="text-align: center;">No student record was found.</p>
-        <?php endif; ?>
-    </div>
+    <?php endif; ?>
+</div>
 </body>
 </html>
