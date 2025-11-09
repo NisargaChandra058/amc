@@ -93,7 +93,8 @@ try {
     }
 
 } catch (PDOException $e) {
-    die("Database error: " " . $e->getMessage());
+    // --- THIS IS THE FIX ---
+    die(sprintf("Database error: %s", $e->getMessage()));
 }
 ?>
 
