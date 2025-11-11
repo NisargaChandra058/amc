@@ -1,99 +1,107 @@
 <?php
+session_save_path('/var/www/sessions');
 session_start();
+require_once('db.php'); // Use our PDO connection ($pdo)
 
-// Check if student is logged in using student_id
+// Check if student is logged in
 if (!isset($_SESSION['student_id'])) {
-    // Redirect to the correct student login page (adjust filename if needed)
-    header('Location: student-login.php'); 
+    header('Location: student-login.php'); // Redirect to login if not logged in
     exit;
 }
 
-// Get email from session for display (ensure it's set during login)
-$student_email = $_SESSION['student_email'] ?? 'Student'; // Default to 'Student' if not set
+$student_id = $_SESSION['student_id'];
+$tests = [];
+$student_name = 'Student';
 
-// --- Optional: Fetch student name from DB ---
-// Uncomment and adapt if you want to display the name
-/*
-include('../db-config.php'); // Include DB connection
-$student_name = 'Student'; // Default name
 try {
-    $stmt = $conn->prepare("SELECT name FROM students WHERE id = ?");
-    $stmt->execute([$_SESSION['student_id']]);
-    $result = $stmt->fetch(PDO::FETCH_ASSOC);
-    if ($result && !empty($result['name'])) {
-        $student_name = $result['name'];
-    }
-} catch (PDOException $e) {
-    // Log error or handle gracefully, don't stop the page
-    error_log("Error fetching student name: " . $e->getMessage());
-}
-$conn = null; // Close connection if opened
-*/
+    // Fetch student's name, email, and class_id
+    $stmt = $pdo->prepare("SELECT student_name, email, class_id FROM students WHERE id = :id");
+    $stmt->execute([':id' => $student_id]);
+    $student = $stmt->fetch(PDO::FETCH_ASSOC);
 
+    if ($student) {
+        $student_name = $student['student_name'];
+        if ($student['class_id']) {
+            // Fetch all tests allocated to this student's class
+            $test_stmt = $pdo->prepare("
+                SELECT qp.id, qp.title 
+                FROM test_allocation ta
+                JOIN question_papers qp ON ta.qp_id = qp.id
+                WHERE ta.class_id = :class_id
+            ");
+            $test_stmt->execute([':class_id' => $student['class_id']]);
+            $tests = $test_stmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+    }
+
+} catch (PDOException $e) {
+    die("Database error: " . htmlspecialchars($e->getMessage()));
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Student Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        /* Consistent Styling */
-        body { font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f9; color: #333; }
-        .navbar { background-color: #007bff; padding: 1em; display: flex; justify-content: flex-end; gap: 1em; }
-        .navbar a { color: #fff; text-decoration: none; padding: 0.5em 1em; border-radius: 5px; transition: background-color 0.3s ease; }
-        .navbar a:hover { background-color: #0056b3; }
-        .container { width: 90%; max-width: 800px; margin: 20px auto; background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center; }
-        h1 { color: #444; margin-bottom: 15px; }
-        p { margin-bottom: 20px; color: #555; }
-        .features { margin-top: 30px; display: flex; flex-wrap: wrap; justify-content: center; gap: 15px; }
-        .feature-link { 
-            display: inline-block; 
-            padding: 12px 20px; 
-            background-color: #17a2b8; /* Teal color */
-            color: white; 
-            text-decoration: none; 
-            border-radius: 5px; 
-            transition: background-color 0.3s;
-            font-size: 16px;
-            min-width: 150px; /* Ensure buttons have some width */
-            text-align: center; /* Center text in button */
+        :root { --space-cadet: #2b2d42; --cool-gray: #8d99ae; --antiflash-white: #edf2f4; --red-pantone: #ef233c; --fire-engine-red: #d90429; }
+        body { font-family: 'Segoe UI', sans-serif; margin: 0; padding: 20px; background: var(--space-cadet); color: var(--antiflash-white); }
+        .navbar { display: flex; justify-content: space-between; align-items: center; max-width: 1000px; margin: 0 auto 20px auto; padding: 10px 20px; background: rgba(141, 153, 174, 0.1); border-radius: 10px; }
+        .navbar h1 { margin: 0; font-size: 1.5em; }
+        .logout-btn { display: inline-block; padding: 8px 12px; background-color: var(--fire-engine-red); color: white; text-decoration: none; border-radius: 5px; font-weight: bold; }
+        .container { max-width: 1000px; margin: 20px auto; padding: 30px; background: rgba(141, 153, 174, 0.1); border-radius: 15px; border: 1px solid rgba(141, 153, 174, 0.2); }
+        .test-list { list-style: none; padding: 0; }
+        .test-list li { background: rgba(43, 45, 66, 0.5); border: 1px solid var(--cool-gray); border-radius: 8px; margin-bottom: 10px; }
+        .test-list a { display: block; padding: 20px; text-decoration: none; color: var(--antiflash-white); font-weight: bold; font-size: 1.2em; }
+        .test-list a:hover { background: rgba(141, 153, 174, 0.2); }
+        .no-tests { color: var(--cool-gray); }
+
+        /* --- THIS IS THE NEW STYLE --- */
+        .results-btn {
+            display: inline-block;
+            padding: 12px 20px;
+            background-color: #007bff; /* Blue */
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: bold;
+            margin-bottom: 20px;
         }
-        .feature-link:hover { background-color: #138496; }
-        .logout-btn { 
-            display: inline-block; 
-            margin-top: 30px;
-            padding: 10px 20px; 
-            background-color: #dc3545; /* Red color */
-            color: white; 
-            text-decoration: none; 
-            border-radius: 5px; 
-            transition: background-color 0.3s;
+        .results-btn:hover {
+            background-color: #0056b3;
         }
-        .logout-btn:hover { background-color: #c82333; }
+        /* --- END OF NEW STYLE --- */
     </style>
 </head>
 <body>
     <div class="navbar">
-        <a href="../logout.php">Logout</a> <!-- Corrected path assuming student files are in a subfolder -->
+        <h1>Welcome, <?= htmlspecialchars($student_name) ?>!</h1>
+        <a href="logout.php" class="logout-btn">Logout</a>
     </div>
 
     <div class="container">
-        <!-- Replace 'Welcome!' with the name if you fetch it -->
-        <h1>Welcome!</h1> 
-        <p>Email: <?= htmlspecialchars($student_email) ?></p>
+        <h2>My Dashboard</h2>
         
-        <div class="features">
-            <a href="attendance.php" class="feature-link">View Attendance</a>
-            <a href="ia-results.php" class="feature-link">View IA Results</a>
-            <a href="take-test.php" class="feature-link">Take Assigned Test</a> <!-- Added Link -->
-            <!-- <a href="timetable.php" class="feature-link">View Timetable</a> -->
-            <!-- Add more links as features are developed -->
-        </div>
+        <!-- --- THIS IS THE NEW BUTTON --- -->
+        <a href="ia-results.php" class="results-btn">View My Results</a>
+        <!-- --- END OF NEW BUTTON --- -->
 
-        <a href="../logout.php" class="logout-btn">Logout</a> <!-- Corrected path -->
+        <h3 style="margin-top: 20px; border-bottom: 1px solid var(--cool-gray); padding-bottom: 10px;">Available Tests</h3>
+        <ul class="test-list">
+            <?php if (empty($tests)): ?>
+                <li class="no-tests" style="padding: 20px;">You have no new tests assigned at this time.</li>
+            <?php else: ?>
+                <?php foreach ($tests as $test): ?>
+                    <li>
+                        <!-- This link is correct -->
+                        <a href="take-test.php?id=<?= htmlspecialchars($test['id']) ?>">
+                            Take Test: <?= htmlspecialchars($test['title']) ?>
+                        </a>
+                    </li>
+                <?php endforeach; ?>
+            <?php endif; ?>
+        </ul>
     </div>
 </body>
 </html>
-
-
