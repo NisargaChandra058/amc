@@ -1,123 +1,96 @@
 <?php
 session_start();
-// 1. Correct the include path - assuming ia-results.php is in the root
-include('db-config.php'); 
+require_once('db.php'); // Use PDO connection
 
-// Check if a student is logged in
+// Check if student is logged in
 if (!isset($_SESSION['student_id'])) {
-    // Redirect to the correct student login page (adjust path if needed)
-    header("Location: student/student-login.php"); 
+    header('Location: /student-login');
     exit;
 }
 
 $student_id = $_SESSION['student_id'];
-$results = []; // Initialize an empty array for results
+$test_id = filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);
+$message = '';
+
+if (!$test_id) {
+    die("Invalid Test ID specified.");
+}
 
 try {
-    // Prepare and execute the query using PDO
-    $stmt = $conn->prepare("SELECT subject, marks FROM ia_results WHERE student_id = ? ORDER BY subject ASC");
-    $stmt->execute([$student_id]);
-    
-    // Fetch all results
-    $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    // --- Handle Test Submission ---
+    if ($_SERVER["REQUEST_METHOD"] == "POST") {
+        $answers = $_POST['answers'] ?? 'No answer provided.';
+        $marks = rand(70, 95); // Placeholder: assign a random mark
+        
+        $sql = "INSERT INTO ia_results (student_id, qp_id, marks, content) 
+                VALUES (:student_id, :qp_id, :marks, :content)
+                ON CONFLICT (student_id, qp_id) DO UPDATE SET
+                marks = EXCLUDED.marks, content = EXCLUDED.content";
+                
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([
+            ':student_id' => $student_id,
+            ':qp_id' => $test_id,
+            ':marks' => $marks,
+            ':content' => $answers
+        ]);
+        
+        $message = "<p class='message success'>Your test has been submitted successfully!</p>";
+    }
+
+    // --- Fetch Test Content ---
+    $stmt = $pdo->prepare("SELECT title, content FROM question_papers WHERE id = :id");
+    $stmt->execute([':id' => $test_id]);
+    $test = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$test) {
+        die("Test not found.");
+    }
 
 } catch (PDOException $e) {
-    // Handle database errors
-    die("Error: Could not retrieve IA results at this time. Please try again later. " . $e->getMessage());
+    die("Database error: " . htmlspecialchars($e->getMessage()));
 }
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <title>Take Test: <?= htmlspecialchars($test['title']) ?></title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IA Results</title>
     <style>
-        /* Consistent Styling from student dashboard */
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; 
-            text-align: center; 
-            background: #f4f7f6; 
-            margin: 0;
-            padding: 20px;
-        }
-        .container { 
-            max-width: 800px; 
-            margin: 40px auto; 
-            background: white; 
-            padding: 25px; 
-            border-radius: 8px; 
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1); 
-        }
-        h2 { 
-            color: #333; 
-            margin-bottom: 25px;
-        }
-        table { 
-            width: 100%; 
-            border-collapse: collapse; 
-            margin-top: 20px; 
-        }
-        th, td { 
-            border: 1px solid #ddd; 
-            padding: 12px; 
-            text-align: center; 
-        }
-        th { 
-            background: #007bff; 
-            color: white; 
-            font-weight: bold;
-        }
-        tr:nth-child(even) {
-            background-color: #f9f9f9;
-        }
-        .back-link { 
-            text-decoration: none; 
-            color: white; 
-            background: #6c757d; 
-            padding: 10px 20px; 
-            display: inline-block; 
-            border-radius: 5px; 
-            margin-top: 25px; 
-            transition: background-color 0.3s;
-        }
-        .back-link:hover { 
-            background: #5a6268; 
-        }
-        .no-records {
-            color: #777;
-            font-style: italic;
-            padding: 20px;
-        }
+        :root { --space-cadet: #2b2d42; --cool-gray: #8d99ae; --antiflash-white: #edf2f4; --red-pantone: #ef233c; --fire-engine-red: #d90429; }
+        body { font-family: 'Segoe UI', sans-serif; margin: 0; padding: 20px; background: var(--space-cadet); color: var(--antiflash-white); }
+        .back-link { display: block; max-width: 1000px; margin: 0 auto 20px auto; text-align: right; font-weight: bold; color: var(--antiflash-white); text-decoration: none; }
+        .back-link:hover { text-decoration: underline; }
+        .container { max-width: 1000px; margin: 20px auto; padding: 30px; background: rgba(141, 153, 174, 0.1); border-radius: 15px; border: 1px solid rgba(141, 153, 174, 0.2); }
+        .question-paper { background: #fff; color: #333; padding: 30px; border-radius: 8px; }
+        .question-paper h1 { margin-top: 0; }
+        .question-paper .content { font-size: 1.1em; line-height: 1.7; white-space: pre-wrap; /* Preserves formatting */ }
+        textarea { width: 100%; min-height: 200px; padding: 10px; font-size: 1em; border: 1px solid var(--cool-gray); border-radius: 5px; margin-top: 20px; }
+        button { padding: 12px 20px; border: none; border-radius: 5px; background-color: var(--fire-engine-red); color: var(--antiflash-white); font-weight: bold; cursor: pointer; width: 100%; font-size: 1.1em; margin-top: 20px; }
+        button:hover { background-color: var(--red-pantone); }
+        .message { padding: 10px; border-radius: 5px; margin-bottom: 1em; text-align: center; font-weight: bold; }
+        .success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
     </style>
 </head>
 <body>
+    <a href="/student-dashboard" class="back-link">&laquo; Back to Dashboard</a>
+
     <div class="container">
-        <h2>Internal Assessment (IA) Results</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>Subject</th>
-                    <th>Marks Obtained</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php if (empty($results)): ?>
-                    <tr>
-                        <td colspan="2" class="no-records">No IA results have been uploaded for you yet.</td>
-                    </tr>
-                <?php else: ?>
-                    <?php foreach ($results as $row): ?>
-                        <tr>
-                            <td><?= htmlspecialchars($row['subject']) ?></td>
-                            <td><?= htmlspecialchars($row['marks']) ?></td>
-                        </tr>
-                    <?php endforeach; ?>
-                <?php endif; ?>
-            </tbody>
-        </table>
-        <!-- Adjust path if student dashboard is elsewhere -->
-        <a href="student/student-dashboard.php" class="back-link">Back to Dashboard</a> 
+        <?php if (!empty($message)) echo $message; ?>
+        
+        <div class="question-paper">
+            <h1><?= htmlspecialchars($test['title']) ?></h1>
+            <hr style="margin: 15px 0;">
+            <div class="content"><?= nl2br(htmlspecialchars($test['content'])) ?></div>
+        </div>
+
+        <form method="POST">
+            <label for="answers" style="font-weight: bold; font-size: 1.2em; margin-top: 20px; display: block;">Your Answers:</label>
+            <textarea id="answers" name="answers" placeholder="Type your answers here..."></textarea>
+            <button type:="submit">Submit Test</button>
+        </form>
     </div>
 </body>
 </html>
