@@ -1,51 +1,43 @@
 <?php
+// --- THIS IS THE FIX ---
+// Tell PHP to use the same writable session folder as your other pages
+session_save_path('/var/www/sessions');
 session_start();
-// 1. Include the CORRECT database connection (matches your dashboard)
-require_once('db.php'); // Changed from 'db-config.php'
+// --- END OF FIX ---
 
-$error = ""; // Variable to hold login error messages
+require_once('db.php'); // Use our PDO connection ($pdo)
 
-// Handle POST request
+// If already logged in, redirect to dashboard
+if (isset($_SESSION['student_id'])) {
+    header("Location: student-dashboard.php");
+    exit;
+}
+
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $email = trim($_POST['email']);
     $password = trim($_POST['password']);
 
-    // Basic validation
     if (empty($email) || empty($password)) {
         $error = "Email and password are required.";
     } else {
         try {
-            // 2. Prepare the query using the CORRECT variable (matches your dashboard)
-            $stmt = $pdo->prepare("SELECT id, email, password FROM students WHERE email = ?"); // Changed from $conn
-            
-            // 3. Execute the query
-            $stmt->execute([$email]);
-            
-            // 4. Fetch the student record
-            $student = $stmt->fetch(PDO::FETCH_ASSOC);
+            // Use $pdo from db.php
+            $stmt = $pdo->prepare("SELECT id, email, password FROM students WHERE email = :email");
+            $stmt->bindParam(':email', $email, PDO::PARAM_STR);
+            $stmt->execute();
+            $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-            // 5. Verify if student exists and password matches
-            // This checks your HASHED password in the database
-            if ($student && password_verify($password, $student['password'])) {
-                
-                // Password is correct, set session variables
-                session_regenerate_id(true); // Prevent session fixation
-                $_SESSION['student_id'] = $student['id'];
-                $_SESSION['student_email'] = $student['email'];
-                
-                // Redirect to the student dashboard
+            if ($user && password_verify($password, $user['password'])) {
+                // Password is correct, start session
+                $_SESSION['student_id'] = $user['id'];
+                $_SESSION['student_email'] = $user['email'];
                 header("Location: student-dashboard.php");
-                exit; // ALWAYS call exit after a header redirect
-                
+                exit;
             } else {
-                // Invalid email or password
                 $error = "Invalid email or password.";
             }
         } catch (PDOException $e) {
-            // Handle potential database errors
-            $error = "Login failed due to a system error. Please try again later.";
-            // Log the detailed error for your own debugging
-            error_log("Student Login DB Error: " . $e->getMessage()); 
+            $error = "An error occurred. Please try again later.";
         }
     }
 }
@@ -54,71 +46,58 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Student Login</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         /* General Styles */
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Arial', sans-serif; }
         body { background-color: #f4f4f9; font-size: 16px; color: #333; line-height: 1.6; overflow-x: hidden; }
         h1, h2, h3, h4 { color: #f4f4f9; }
-        /* Background Video */
-        .video-background { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -1; overflow: hidden; }
+        .video-background { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -1; }
         #bg-video { object-fit: cover; width: 100%; height: 100%; }
-        /* Login Form Container */
-        .login-container { display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 20px; }
-        /* Login Form Styling */
-        .login-form { background-color: rgba(0, 0, 0, 0.75); color: #fff; padding: 30px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5); width: 100%; max-width: 400px; text-align: center; }
-        .login-form h2 { margin-bottom: 25px; font-size: 2rem; }
+        .login-container { display: flex; justify-content: center; align-items: center; height: 100vh; position: relative; z-index: 1; }
+        .login-form { background-color: rgba(0, 0, 0, 0.7); color: #fff; padding: 30px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5); width: 100%; max-width: 400px; text-align: center; }
+        .login-form h2 { margin-bottom: 20px; font-size: 2rem; }
         .form-group { margin-bottom: 20px; text-align: left; }
-        .form-group label { font-size: 1rem; color: #eee; display: block; margin-bottom: 5px; }
-        .form-group input { width: 100%; padding: 12px; margin-top: 5px; border: 1px solid #555; border-radius: 5px; font-size: 1rem; background-color: #333; color: #fff; }
-        .form-group input:focus { outline: none; border-color: #3498db; box-shadow: 0 0 5px rgba(52, 152, 219, 0.5); }
-        button.btn { width: 100%; padding: 12px; background-color: #3498db; color: white; font-size: 1.2rem; font-weight: bold; border-radius: 5px; border: none; cursor: pointer; transition: background-color 0.3s; margin-top: 10px; }
+        .form-group label { font-size: 1rem; color: #fff; }
+        .form-group input { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ddd; border-radius: 5px; font-size: 1rem; }
+        .form-group input:focus { outline: none; border-color: #3498db; }
+        button.btn { width: 100%; padding: 10px; background-color: #3498db; color: white; font-size: 1.2rem; border-radius: 5px; border: none; cursor: pointer; transition: background-color 0.3s; }
         button.btn:hover { background-color: #2980b9; }
-        /* Error Message */
-        .error-message { color: #ff6b6b; background-color: rgba(255, 107, 107, 0.1); border: 1px solid #ff6b6b; padding: 10px; border-radius: 5px; font-size: 1rem; margin-top: 15px; text-align: center; }
-        /* Back Link */
-         .back-link { display: block; margin-top: 15px; text-decoration: none; color: #bdc3c7; font-size: 0.9rem; }
-         .back-link:hover { color: #fff; text-decoration: underline; }
+        .error-message { color: #ffcccc; background-color: rgba(255,0,0,0.2); border: 1px solid red; padding: 10px; border-radius: 5px; font-size: 1rem; margin-bottom: 15px; }
+        @media (max-width: 480px) {
+            .login-form { width: 95%; padding: 20px; }
+            .login-form h2 { font-size: 1.6rem; }
+            .form-group input { font-size: 14px; padding: 12px; }
+            button.btn { padding: 12px; font-size: 14px; }
+        }
     </style>
 </head>
 <body>
-    
     <div class="video-background">
-        <video autoplay muted loop playsinline id="bg-video">
-            <source src="../video/back.mp4" type="video/mp4"> 
+        <video autoplay muted loop id="bg-video">
+            <source src="video/back.mp4" type="video/mp4">
             Your browser does not support the video tag.
         </video>
     </div>
-
     <div class="login-container">
         <div class="login-form">
             <h2>Student Login</h2>
-            
-            <?php 
-            // Display error message if it exists
-            if (!empty($error)) {
-                 // Use htmlspecialchars for security, just in case
-                 echo "<p class='error-message'>" . htmlspecialchars($error) . "</p>"; 
-            }
-            ?>
-            
+            <?php if (isset($error)): ?>
+                <p class='error-message'><?= htmlspecialchars($error) ?></p>
+            <?php endif; ?>
             <form action="student-login.php" method="POST">
                 <div class="form-group">
                     <label for="email">Email:</label>
                     <input type="email" name="email" id="email" required>
                 </div>
-                
                 <div class="form-group">
                     <label for="password">Password:</label>
                     <input type="password" name="password" id="password" required>
                 </div>
-                
                 <button class="btn" type="submit">Login</button>
             </form>
-             <a href="../index.php" class="back-link">Back to Home</a> 
         </div>
     </div>
-
 </body>
 </html>
