@@ -59,7 +59,6 @@ try {
     }
 
     // Fetch all subjects and group by semester
-    // This query no longer filters out allocated subjects
     $subject_stmt = $pdo->query("
         SELECT id, name AS subject_name, subject_code, semester_id
         FROM subjects
@@ -67,7 +66,10 @@ try {
     ");
     $subjects_by_semester = [];
      while ($subject = $subject_stmt->fetch(PDO::FETCH_ASSOC)) {
-        $subjects_by_semester[$subject['semester_id']][] = $subject;
+        // Only add if it has a semester_id
+        if ($subject['semester_id']) {
+            $subjects_by_semester[$subject['semester_id']][] = $subject;
+        }
     }
 
     // Fetch all staff members
@@ -113,7 +115,7 @@ $subjects_json = json_encode($subjects_by_semester);
     <div class="container">
         <h2>Allocate Subject to Staff</h2>
 
-        <?php if (isset($message)) echo $message; ?>
+        <?php if (!empty($message)) echo $message; ?>
 
         <form action="subject-allocation.php" method="POST">
             <label for="semester_id">Select Semester:</label>
@@ -178,6 +180,9 @@ $subjects_json = json_encode($subjects_by_semester);
                     option.textContent = classItem.name;
                     classSelect.appendChild(option);
                 });
+            } else if (selectedSemesterId) {
+                 // Semester selected but no classes found
+                 classSelect.innerHTML = '<option value="">-- No classes found for this semester --</option>';
             }
 
             // Populate Subjects
@@ -188,6 +193,9 @@ $subjects_json = json_encode($subjects_by_semester);
                     option.textContent = subjectItem.subject_code + ' - ' + subjectItem.subject_name;
                     subjectSelect.appendChild(option);
                 });
+            } else if (selectedSemesterId) {
+                // Semester selected but no subjects found
+                subjectSelect.innerHTML = '<option value="">-- No subjects found for this semester --</option>';
             }
         });
     </script>
