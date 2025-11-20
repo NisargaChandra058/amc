@@ -8,6 +8,7 @@ RUN a2enmod rewrite
 COPY apache/000-default.conf /etc/apache2/sites-available/000-default.conf
 
 # Install system dependencies required for PHP extensions
+# Added libraries for gd (images) and zip (Excel/Word) support
 RUN apt-get update && apt-get install -y \
     libpq-dev \
     libzip-dev \
@@ -18,6 +19,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Configure and install the gd, zip, and curl extensions
+# 'gd' needs configuration to know where the jpeg/freetype libs are
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install -j$(nproc) gd \
     && docker-php-ext-install pdo pdo_pgsql zip curl
