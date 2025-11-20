@@ -1,8 +1,9 @@
 <?php
-// --- THIS IS THE FIX ---
+// --- FIX: Correct session path ---
 session_save_path('/var/www/sessions');
 session_start();
-// --- END OF FIX ---
+// --- END FIX ---
+
 require_once('db.php'); // Use our PDO connection ($pdo)
 
 // Check if student is logged in
@@ -36,7 +37,9 @@ try {
             $tests = $test_stmt->fetchAll(PDO::FETCH_ASSOC);
         }
 
+        // --- THIS IS THE SQL FIX ---
         // 2. Fetch all COMPLETED results for this student
+        // This query joins three tables to get the subject name correctly
         $results_stmt = $pdo->prepare("
             SELECT 
                 s.name AS subject_name,
@@ -55,6 +58,7 @@ try {
         ");
         $results_stmt->execute([':student_id' => $student_id]);
         $results = $results_stmt->fetchAll(PDO::FETCH_ASSOC);
+        // --- END OF SQL FIX ---
     }
 
 } catch (PDOException $e) {
@@ -81,13 +85,36 @@ try {
         .test-list a { display: block; padding: 20px; text-decoration: none; color: var(--antiflash-white); font-weight: bold; font-size: 1.2em; }
         .test-list a:hover { background: rgba(141, 153, 174, 0.2); }
         .no-tests { color: var(--cool-gray); }
-        .results-table { width: 100%; border-collapse: collapse; margin-top: 20px; background: #fff; color: var(--space-cadet); border-radius: 8px; overflow: hidden; }
+        
+        /* Table styles for results */
+        .results-table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            margin-top: 20px; 
+            background: #fff; 
+            color: var(--space-cadet); 
+            border-radius: 8px;
+            overflow: hidden;
+        }
         .results-table th, .results-table td { padding: 12px 15px; border: 1px solid #ddd; text-align: left; }
         .results-table th { background-color: var(--space-cadet); color: var(--antiflash-white); }
         .results-table tr:nth-child(even) { background-color: #f9f9f9; }
         .message.error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; padding: 10px; border-radius: 5px; }
-        .results-btn { display: inline-block; padding: 12px 20px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; margin-bottom: 20px; }
-        .results-btn:hover { background-color: #0056b3; }
+        
+        /* New button style */
+        .results-btn {
+            display: inline-block;
+            padding: 12px 20px;
+            background-color: #007bff; /* Blue */
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+        .results-btn:hover {
+            background-color: #0056b3;
+        }
     </style>
 </head>
 <body>
@@ -103,15 +130,18 @@ try {
     <?php else: ?>
         <div class="container">
             <h2>My Dashboard</h2>
-            <a href="ia-results.php" class="results-btn">View My Results</a>
+            
+            <!-- Link to separate results page if preferred -->
+            <a href="ia-results.php" class="results-btn">View Detailed Results Page</a>
 
-            <h3 style="margin-top: 20px; border-bottom: 1px solid var(--cool-gray); padding-bottom: 10px;">Available Tests</h3>
+            <h3 style="margin-top: 30px; border-bottom: 1px solid var(--cool-gray); padding-bottom: 10px;">Available Tests</h3>
             <ul class="test-list">
                 <?php if (empty($tests)): ?>
                     <li class="no-tests" style="padding: 20px;">You have no new tests assigned at this time.</li>
                 <?php else: ?>
                     <?php foreach ($tests as $test): ?>
                         <li>
+                            <!-- This link now points to the file directly to be safe -->
                             <a href="take-test.php?id=<?= htmlspecialchars($test['id']) ?>">
                                 Take Test: <?= htmlspecialchars($test['title']) ?>
                             </a>
@@ -119,6 +149,32 @@ try {
                     <?php endforeach; ?>
                 <?php endif; ?>
             </ul>
+
+            <h3 style="margin-top: 40px; border-bottom: 1px solid var(--cool-gray); padding-bottom: 10px;">My Recent Results</h3>
+            <table class="results-table">
+                <thead>
+                    <tr>
+                        <th>Subject</th>
+                        <th>Test Name</th>
+                        <th>Marks Obtained</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (empty($results)): ?>
+                        <tr>
+                            <td colspan="3" style="text-align: center;">You have not completed any tests yet.</td>
+                        </tr>
+                    <?php else: ?>
+                        <?php foreach ($results as $result): ?>
+                            <tr>
+                                <td><?= htmlspecialchars($result['subject_name']) ?></td>
+                                <td><?= htmlspecialchars($result['test_name']) ?></td>
+                                <td><?= htmlspecialchars($result['marks']) ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </tbody>
+            </table>
         </div>
     <?php endif; ?>
 </body>
