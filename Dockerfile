@@ -7,6 +7,7 @@ RUN a2enmod rewrite
 # Copy the custom Apache configuration
 COPY apache/000-default.conf /etc/apache2/sites-available/000-default.conf
 
+# --- THIS IS THE FIX ---
 # Install system dependencies required for PHP extensions
 # Added libraries for gd (images) and zip (Excel/Word) support
 RUN apt-get update && apt-get install -y \
@@ -23,6 +24,7 @@ RUN apt-get update && apt-get install -y \
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install -j$(nproc) gd \
     && docker-php-ext-install pdo pdo_pgsql zip curl
+# --- END OF FIX ---
 
 # Install Composer for PHP dependency management
 COPY --from=composer /usr/bin/composer /usr/bin/composer
@@ -34,13 +36,10 @@ WORKDIR /var/www/html
 COPY composer.json .
 RUN composer install
 
-# --- THIS IS THE FIX ---
-# Instead of copying from 'src/', we copy from the current directory '.'
+# Copy the rest of the application source code
 COPY . .
-# --- END OF FIX ---
 
 # --- PERMISSIONS FIX ---
-
 # 1. Create a writable directory for PHP sessions
 RUN mkdir -p /var/www/sessions
 
