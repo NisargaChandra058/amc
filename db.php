@@ -1,89 +1,80 @@
 <?php
 /**
  * db.php
- * Database connection + automatic migrations
- * This version fixes the nested transaction error for PostgreSQL.
+ * Database connection + automatic migrations for Neon (PostgreSQL)
  */
 
-// Get the database connection URL from Render's environment variables
-$database_url = getenv('DATABASE_URL');
+// =================================================================
+// 1. PASTE YOUR NEON CONNECTION STRING HERE
+// It looks like: postgres://user:pass@ep-xyz.neon.tech/neondb
+// =================================================================
+$database_url = "psql 'postgresql://neondb_owner:npg_STKDhH8lomb7@ep-steep-grass-a4zzp7i4-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require'"; 
 
-if ($database_url === false) {
-    $host = getenv('DB_HOST') ?: 'db';
-    $port = getenv('DB_PORT') ?: '5432';
-    $dbname = getenv('DB_NAME') ?: 'admission_db';
-    $user = getenv('DB_USER') ?: 'user';
-    $password = getenv('DB_PASSWORD') ?: 'password';
-    $dsn = "pgsql:host=$host;port=$port;dbname=$dbname;sslmode=prefer";
-} else {
-    $db_parts = parse_url($database_url);
-    $host = $db_parts['host'];
-    $port = $db_parts['port'] ?? '5432';
-    $dbname = ltrim($db_parts['path'], '/');
-    $user = $db_parts['user'];
-    $password = $db_parts['pass'];
-    $dsn = "pgsql:host=$host;port=$port;dbname=$dbname;sslmode=require";
+// Use Environment variable if available (for production), otherwise use the string above
+if (getenv('DATABASE_URL')) {
+    $database_url = getenv('DATABASE_URL');
 }
 
-/**
- * A simple function to run a database change (migration) only once.
- * Each migration runs in its own isolated transaction.
- */
-function run_migration(PDO $pdo, string $migration_id, string $sql) {
-    // Check if migration has already been run
-    $stmt = $pdo->prepare("SELECT 1 FROM db_migrations WHERE migration_id = ?");
-    $stmt->execute([$migration_id]);
-    
-    if ($stmt->fetch() !== false) {
-        return; // Migration already run, do nothing
-    }
+// Parse the connection string
+if (empty($database_url) || strpos($database_url, 'postgres://') === false) {
+    die("❌ Error: Please paste your Neon connection string into db.php on line 11.");
+}
 
-    // Migration not run, try to execute it
+$db_parts = parse_url($database_url);
+$host = $db_parts['host'];
+$port = $db_parts['port'] ?? '5432';
+$dbname = ltrim($db_parts['path'], '/');
+$user = $db_parts['user'];
+$password = $db_parts['pass'];
+$dsn = "pgsql:host=$host;port=$port;dbname=$dbname;sslmode=require";
+
+/**
+ * Function to run a migration safely
+ */
+function run_migration($pdo, $migration_id, $sql) {
     try {
-        // We run the migration in its OWN transaction.
+        // Check if migration exists
+        $stmt = $pdo->prepare("SELECT 1 FROM db_migrations WHERE migration_id = ?");
+        $stmt->execute([$migration_id]);
+        
+        if ($stmt->fetch()) {
+            return; // Already run
+        }
+
+        // Run migration
         $pdo->beginTransaction();
         $pdo->exec($sql);
-        
-        // Log that this migration is complete
-        $log_stmt = $pdo->prepare("INSERT INTO db_migrations (migration_id) VALUES (?)");
-        $log_stmt->execute([$migration_id]);
-        
-        // Commit this specific migration
+        $log = $pdo->prepare("INSERT INTO db_migrations (migration_id) VALUES (?)");
+        $log->execute([$migration_id]);
         $pdo->commit();
-    
+        
     } catch (PDOException $e) {
-        // Roll back THIS migration's transaction
         $pdo->rollBack();
-
-        // Catch known "already exists" errors and log them as a success
-        $safe_error_codes = ['42P07', '42701', '23505', '42710']; // "Already Exists" errors
-
-        if (in_array($e->getCode(), $safe_error_codes)) {
-            // The object already exists, but wasn't logged. Log it now.
-            $log_stmt = $pdo->prepare("INSERT INTO db_migrations (migration_id) VALUES (?) ON CONFLICT (migration_id) DO NOTHING");
-            $log_stmt->execute([$migration_id]);
+        // Ignore "already exists" errors to prevent crashing on re-runs
+        if (!in_array($e->getCode(), ['42P07', '42701', '23505', '42710'])) {
+            throw $e; 
         } else {
-            // A different, more serious error occurred.
-            throw $e; // Re-throw the error
+            // Mark as run if it existed but wasn't logged
+            $log = $pdo->prepare("INSERT INTO db_migrations (migration_id) VALUES (?) ON CONFLICT DO NOTHING");
+            $log->execute([$migration_id]);
         }
     }
 }
 
-
 try {
     $pdo = new PDO($dsn, $user, $password);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
 
-    // --- 1. CREATE THE MIGRATIONS TABLE (outside a transaction) ---
+    // --- 1. Setup Migrations Table ---
     $pdo->exec("CREATE TABLE IF NOT EXISTS db_migrations (
         migration_id VARCHAR(255) PRIMARY KEY,
         run_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );");
 
-    // --- 2. RUN ALL MIGRATIONS ---
-    // Each run_migration() call is now atomic and safe.
+    // --- 2. Run Migrations (Your Schema) ---
     
-    // Create Tables
+    // Basic Tables
     run_migration($pdo, 'create_table_students', "CREATE TABLE IF NOT EXISTS students (id SERIAL PRIMARY KEY, student_id_text VARCHAR(20) UNIQUE);");
     run_migration($pdo, 'create_table_users', "CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, first_name VARCHAR(100), surname VARCHAR(100), email VARCHAR(255) UNIQUE NOT NULL, password VARCHAR(255) NOT NULL, role VARCHAR(20) NOT NULL DEFAULT 'student');");
     run_migration($pdo, 'create_table_semesters', "CREATE TABLE IF NOT EXISTS semesters (id SERIAL PRIMARY KEY, name VARCHAR(100) NOT NULL UNIQUE);");
@@ -97,7 +88,7 @@ try {
     run_migration($pdo, 'create_table_daily_attendance', "CREATE TABLE IF NOT EXISTS daily_attendance (id SERIAL PRIMARY KEY, student_id INT, date DATE);");
     run_migration($pdo, 'create_table_student_subject_allocation', "CREATE TABLE IF NOT EXISTS student_subject_allocation (id SERIAL PRIMARY KEY, student_id INT NOT NULL REFERENCES students(id) ON DELETE CASCADE, subject_id INT NOT NULL REFERENCES subjects(id) ON DELETE CASCADE, UNIQUE(student_id, subject_id));");
 
-    // Add Columns
+    // Add Columns (Students)
     run_migration($pdo, 'add_students_columns_batch_1', "
         ALTER TABLE students
         ADD COLUMN IF NOT EXISTS usn VARCHAR(20),
@@ -131,6 +122,7 @@ try {
         ADD COLUMN IF NOT EXISTS section VARCHAR(10);
     ");
 
+    // Other Columns
     run_migration($pdo, 'add_classes_semester_id', "ALTER TABLE classes ADD COLUMN IF NOT EXISTS semester_id INT;");
     run_migration($pdo, 'add_qp_subject_id', "ALTER TABLE question_papers ADD COLUMN IF NOT EXISTS subject_id INT;");
     run_migration($pdo, 'add_subjects_semester_id', "ALTER TABLE subjects ADD COLUMN IF NOT EXISTS semester_id INT;"); 
@@ -145,12 +137,12 @@ try {
         ON CONFLICT (name) DO NOTHING;
     ");
     
-    // Add constraints
+    // Constraints
     run_migration($pdo, 'add_constraint_students_email_unique', "ALTER TABLE students ADD CONSTRAINT students_email_unique UNIQUE (email);");
     run_migration($pdo, 'add_constraint_students_usn_unique', "ALTER TABLE students ADD CONSTRAINT students_usn_unique UNIQUE (usn);");
     run_migration($pdo, 'add_constraint_subjects_subject_code_unique', "ALTER TABLE subjects ADD CONSTRAINT subjects_subject_code_key UNIQUE (subject_code);");
-    
+
 } catch (PDOException $e) {
-    die("Database connection failed: " . $e->getMessage());
+    die("❌ Database connection failed: " . $e->getMessage());
 }
 ?>
