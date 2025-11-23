@@ -1,6 +1,6 @@
 <?php
 session_start();
-include('db-config.php'); // Ensure this points to your secure connection file
+include('db.php'); // Ensure this points to your secure connection file
 
 // If already logged in, redirect to dashboard
 if (isset($_SESSION['user_id']) && isset($_SESSION['role']) && $_SESSION['role'] === 'student') {
@@ -223,3 +223,4 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
 </body>
 </html>
+
