@@ -1,163 +1,225 @@
 <?php
-// student-login.php - robust login + debug fallback
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
-
-// --- SESSION SETUP ---
-// Use same writable session folder as your other pages if required
-// Make sure the folder exists and PHP-FPM/Apache user can write to it.
-$session_dir = '/var/www/sessions';
-if (!is_dir($session_dir)) {
-    // try to create it (best-effort)
-    @mkdir($session_dir, 0755, true);
-}
-if (is_dir($session_dir) && is_writable($session_dir)) {
-    session_save_path($session_dir);
-}
-
-// simpler cookie params - avoid domain when unsure
-$secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
-session_set_cookie_params([
-    'lifetime' => 0,
-    'path' => '/',
-    'secure' => $secure,
-    'httponly' => true,
-    'samesite' => 'Lax'
-]);
-
-// start the session
 session_start();
+include('db-config.php'); // Ensure this points to your secure connection file
 
-// If already logged in, redirect
-if (isset($_SESSION['student_id'])) {
-    header('Location: student-dashboard.php');
+// If already logged in, redirect to dashboard
+if (isset($_SESSION['user_id']) && isset($_SESSION['role']) && $_SESSION['role'] === 'student') {
+    header("Location: student-dashboard.php");
     exit;
 }
 
-require_once('db.php'); // provides $pdo
-
 $error = '';
-$emailValue = ''; // persist email in form if needed
 
-// Simple brute-force protection (session-scoped)
-$MAX_ATTEMPTS = 6;
-$LOCKOUT_WINDOW = 15 * 60; // 15 minutes
-if (!isset($_SESSION['login_attempts'])) {
-    $_SESSION['login_attempts'] = 0;
-    $_SESSION['login_first_attempt_time'] = time();
-}
+if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    $email = trim($_POST['email']);
+    $password = trim($_POST['password']);
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $now = time();
-
-    // reset attempts window if expired
-    if (!empty($_SESSION['login_first_attempt_time']) && ($now - $_SESSION['login_first_attempt_time']) > $LOCKOUT_WINDOW) {
-        $_SESSION['login_attempts'] = 0;
-        $_SESSION['login_first_attempt_time'] = $now;
-    }
-
-    if ($_SESSION['login_attempts'] >= $MAX_ATTEMPTS) {
-        $error = "Too many login attempts. Please try again after 15 minutes.";
+    if (empty($email) || empty($password)) {
+        $error = "Please enter both email and password.";
     } else {
-        $email = isset($_POST['email']) ? trim($_POST['email']) : '';
-        $password = isset($_POST['password']) ? $_POST['password'] : '';
-        $emailValue = htmlspecialchars($email);
+        // --- SECURE QUERY: Check for user with email AND role='student' ---
+        $stmt = $conn->prepare("SELECT id, first_name, surname, password, role FROM users WHERE email = ? AND role = 'student'");
+        $stmt->bind_param("s", $email);
+        $stmt->execute();
+        $result = $stmt->get_result();
 
-        if ($email === '' || $password === '') {
-            $error = "Email and password are required.";
-        } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            $error = "Please enter a valid email address.";
-        } else {
-            try {
-                // fetch user (case-insensitive email match)
-                $stmt = $pdo->prepare("SELECT id, email, password FROM students WHERE LOWER(email) = LOWER(:email) LIMIT 1");
-                $stmt->execute([':email' => $email]);
-                $user = $stmt->fetch(PDO::FETCH_ASSOC);
-
-                if ($user && password_verify($password, $user['password'])) {
-                    // successful login
-                    session_regenerate_id(true);
-                    $_SESSION['student_id'] = (int)$user['id'];
-                    $_SESSION['student_email'] = $user['email'];
-
-                    // reset attempts
-                    unset($_SESSION['login_attempts'], $_SESSION['login_first_attempt_time']);
-
-                    // Attempt header redirect
-                    header('Location: student-dashboard.php');
-                    // If headers already sent or redirect ignored, provide JS/meta fallback and exit
-                    echo "<!doctype html><html><head><meta charset='utf-8'><title>Redirecting...</title>";
-                    echo "<meta http-equiv='refresh' content='0;url=student-dashboard.php' />";
-                    echo "<script>window.location.href='student-dashboard.php';</script>";
-                    echo "</head><body>If you are not redirected automatically, <a href='student-dashboard.php'>click here</a>.</body></html>";
-                    exit;
-                } else {
-                    // failed auth
-                    $_SESSION['login_attempts'] = ($_SESSION['login_attempts'] ?? 0) + 1;
-                    if (empty($_SESSION['login_first_attempt_time'])) $_SESSION['login_first_attempt_time'] = $now;
-                    $attempts_left = max(0, $MAX_ATTEMPTS - $_SESSION['login_attempts']);
-                    $error = "Invalid email or password. Attempts left: {$attempts_left}.";
-                }
-            } catch (PDOException $e) {
-                error_log("Login DB error: " . $e->getMessage());
-                $error = "An internal error occurred. Please try again later.";
+        if ($result->num_rows === 1) {
+            $row = $result->fetch_assoc();
+            
+            // Verify the hashed password
+            if (password_verify($password, $row['password'])) {
+                // Password is correct, start session
+                $_SESSION['user_id'] = $row['id'];
+                $_SESSION['role'] = $row['role'];
+                $_SESSION['name'] = $row['first_name'] . ' ' . $row['surname'];
+                
+                header("Location: student-dashboard.php");
+                exit;
+            } else {
+                $error = "Invalid password.";
             }
+        } else {
+            $error = "No student account found with that email.";
         }
+        $stmt->close();
     }
 }
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<title>Student Login</title>
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<style>
-/* Minimal styles, keeps your video background and layout */
-*{box-sizing:border-box}
-body{font-family:Arial,Helvetica,sans-serif;background:#f4f4f9;margin:0;padding:0}
-.video-bg{position:fixed;inset:0;z-index:-1}
-#bg-video{object-fit:cover;width:100%;height:100%}
-.center{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-.card{width:100%;max-width:420px;background:rgba(0,0,0,0.75);color:#fff;padding:26px;border-radius:10px}
-label{display:block;margin-bottom:6px;font-weight:700}
-input{width:100%;padding:10px;border-radius:6px;border:1px solid #ccc;margin-bottom:12px}
-button{width:100%;padding:10px;border-radius:6px;border:none;background:#3498db;color:#fff;font-weight:700}
-.error{background:rgba(255,0,0,0.12);padding:10px;border-radius:6px;color:#ffd3d3;margin-bottom:12px}
-.hint{color:#ddd;font-size:0.9rem;margin-top:8px}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Login</title>
+    <style>
+        /* Reset and Base Styles */
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        
+        body {
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            color: #333;
+        }
+
+        /* Background Video Styling */
+        .video-background {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: -1;
+            overflow: hidden;
+        }
+        
+        #bg-video {
+            min-width: 100%; min-height: 100%;
+            object-fit: cover;
+        }
+        
+        /* Overlay to make text readable */
+        .video-overlay {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.5); /* Dark overlay */
+            z-index: -1;
+        }
+
+        /* Login Container */
+        .login-container {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 40px 30px;
+            border-radius: 10px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+            animation: fadeIn 0.8s ease-out;
+        }
+
+        h2 {
+            margin-bottom: 20px;
+            color: #007bff;
+            font-size: 28px;
+        }
+
+        /* Form Elements */
+        .form-group {
+            margin-bottom: 20px;
+            text-align: left;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+
+        input[type="email"],
+        input[type="password"] {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input:focus {
+            border-color: #007bff;
+            outline: none;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 18px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
+        /* Links */
+        .links {
+            margin-top: 15px;
+            font-size: 14px;
+        }
+
+        .links a {
+            color: #007bff;
+            text-decoration: none;
+            margin: 0 5px;
+        }
+
+        .links a:hover {
+            text-decoration: underline;
+        }
+
+        /* Error Message */
+        .error-msg {
+            background-color: #ffdddd;
+            color: #d8000c;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            border: 1px solid #ffbaba;
+        }
+
+        /* Animation */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
 </head>
 <body>
-<div class="video-bg" aria-hidden="true">
-    <video autoplay muted loop id="bg-video" playsinline>
-        <source src="video/back.mp4" type="video/mp4">
-    </video>
-</div>
 
-<div class="center">
-    <div class="card" role="main" aria-labelledby="login-title">
-        <h2 id="login-title" style="margin-top:0;margin-bottom:14px">Student Login</h2>
+    <!-- Background Video -->
+    <div class="video-background">
+        <div class="video-overlay"></div>
+        <video autoplay muted loop id="bg-video">
+            <!-- Make sure this path is correct relative to this file -->
+            <source src="video/back.mp4" type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
+    </div>
 
+    <div class="login-container">
+        <h2>Student Login</h2>
+        
         <?php if ($error): ?>
-            <div class="error" role="alert"><?= htmlspecialchars($error) ?></div>
+            <div class="error-msg"><?= htmlspecialchars($error) ?></div>
         <?php endif; ?>
 
-        <form method="POST" action="student-login.php" novalidate>
-            <label for="email">Email</label>
-            <input id="email" name="email" type="email" required value="<?= $emailValue ?>">
+        <form action="student-login.php" method="POST">
+            <div class="form-group">
+                <label for="email">Email Address</label>
+                <input type="email" id="email" name="email" placeholder="Enter your email" required>
+            </div>
 
-            <label for="password">Password</label>
-            <input id="password" name="password" type="password" required>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" placeholder="Enter your password" required>
+            </div>
 
             <button type="submit">Login</button>
-
-            <div class="hint">If you cannot log in, ensure your account exists and the password was created with <code>password_hash()</code>.</div>
         </form>
 
-        <noscript>
-            <p style="color:#ffd3d3;margin-top:12px">JavaScript is disabled — if login succeeds but redirect fails, click the link shown after logging in.</p>
-        </noscript>
+        <div class="links">
+            <p>First time here? <a href="register.php">Set your Password</a></p>
+            <p><a href="forgot-password.php">Forgot Password?</a></p>
+        </div>
     </div>
-</div>
+
 </body>
 </html>
