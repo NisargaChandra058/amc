@@ -31,8 +31,9 @@ if (isset($_SESSION['user_id']) && isset($_SESSION['role'])) {
             header('Location: principal-panel.php');
             exit;
         default:
-            // If role is unknown, send to index or logout
-            header('Location: index.php'); 
+            // If role is unknown, logout
+            session_destroy();
+            header('Location: login.php'); 
             exit;
     }
 }
@@ -40,7 +41,7 @@ if (isset($_SESSION['user_id']) && isset($_SESSION['role'])) {
 $error = '';
 $email = '';
 
-// 2. Handle Login Form Submission
+// 2. Handle Login Form Submission INSIDE this file
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $email = trim($_POST['email'] ?? '');
     $password = $_POST['password'] ?? '';
@@ -50,7 +51,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         try {
             // Prepare SQL to find user by email
-            // We explicitly select 'role' to know where to redirect them
             $stmt = $pdo->prepare("SELECT id, first_name, surname, password, role FROM users WHERE email = :email LIMIT 1");
             $stmt->execute(['email' => $email]);
             $user = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -82,7 +82,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         header('Location: principal-panel.php');
                         exit;
                     default:
-                        // Fallback if role is unknown
                         $_SESSION['error'] = "Login Successful, but your role is undefined.";
                         session_destroy(); 
                         header('Location: login.php');
@@ -105,164 +104,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <title>Login - College Exam Section</title>
     <style>
 /* General Styles */
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-    font-family: 'Arial', sans-serif;
-}
-
-body {
-    background-color: #f4f4f9;
-    font-size: 16px;
-    color: #333;
-    line-height: 1.6;
-    overflow-x: hidden;
-}
-
-h1, h2, h3, h4 {
-    color: #333;
-}
-
-a {
-    text-decoration: none;
-    color: #3498db;
-}
-
-a:hover {
-    color: #2980b9;
-}
+* { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Arial', sans-serif; }
+body { background-color: #f4f4f9; font-size: 16px; color: #333; line-height: 1.6; overflow-x: hidden; }
+h1, h2, h3, h4 { color: #333; }
+a { text-decoration: none; color: #3498db; }
+a:hover { color: #2980b9; }
 
 /* Background Video */
-.video-background {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    z-index: -1;
-}
-
-#bg-video {
-    object-fit: cover;
-    width: 100%;
-    height: 100%;
-}
+.video-background { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: -1; }
+#bg-video { object-fit: cover; width: 100%; height: 100%; }
 
 /* Login Form Container */
-.login-container {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    height: 100vh;
-    position: relative;
-    z-index: 1;
-}
-
-.login-form {
-    background-color: rgba(0, 0, 0, 0.7);
-    color: #fff;
-    padding: 30px;
-    border-radius: 10px;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
-    width: 100%;
-    max-width: 400px;
-    text-align: center;
-}
-
-.login-form h2 {
-    margin-bottom: 20px;
-    font-size: 2rem;
-    color: #fff; /* Ensure title is white on dark background */
-}
-
-.form-group {
-    margin-bottom: 20px;
-    text-align: left;
-}
-
-.form-group label {
-    font-size: 1rem;
-    color: #fff;
-}
-
-.form-group input {
-    width: 100%;
-    padding: 10px;
-    margin-top: 5px;
-    border: 1px solid #ddd;
-    border-radius: 5px;
-    font-size: 1rem;
-}
-
-.form-group input:focus {
-    outline: none;
-    border-color: #3498db;
-}
-
-button.btn {
-    width: 100%;
-    padding: 10px;
-    background-color: #3498db;
-    color: white;
-    font-size: 1.2rem;
-    border-radius: 5px;
-    border: none;
-    cursor: pointer;
-    transition: background-color 0.3s;
-}
-
-button.btn:hover {
-    background-color: #2980b9;
-}
-
-.register-link {
-    margin-top: 20px;
-    font-size: 1rem;
-    color: #fff;
-}
-
-.register-link a {
-    color: #3498db;
-}
-
-.register-link a:hover {
-    color: #2980b9;
-}
-
-/* Forget Password Link */
-.forgot-password {
-    margin-top: 10px;
-    font-size: 1rem;
-    color: #fff;
-}
-
-.forgot-password a {
-    color: #e74c3c;
-}
-
-.forgot-password a:hover {
-    color: #c0392b;
-}
+.login-container { display: flex; justify-content: center; align-items: center; height: 100vh; position: relative; z-index: 1; }
+.login-form { background-color: rgba(0, 0, 0, 0.7); color: #fff; padding: 30px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5); width: 100%; max-width: 400px; text-align: center; }
+.login-form h2 { margin-bottom: 20px; font-size: 2rem; color: #fff; }
+.form-group { margin-bottom: 20px; text-align: left; }
+.form-group label { font-size: 1rem; color: #fff; }
+.form-group input { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ddd; border-radius: 5px; font-size: 1rem; }
+.form-group input:focus { outline: none; border-color: #3498db; }
+button.btn { width: 100%; padding: 10px; background-color: #3498db; color: white; font-size: 1.2rem; border-radius: 5px; border: none; cursor: pointer; transition: background-color 0.3s; }
+button.btn:hover { background-color: #2980b9; }
+.register-link { margin-top: 20px; font-size: 1rem; color: #fff; }
+.register-link a { color: #3498db; }
+.forgot-password { margin-top: 10px; font-size: 1rem; color: #fff; }
+.forgot-password a { color: #e74c3c; }
 
 /* Responsive Styles */
 @media (max-width: 768px) {
-    .login-form {
-        width: 90%;
-        padding: 20px;
-    }
-
-    .login-form h2 {
-        font-size: 1.8rem;
-    }
-
-    .form-group input {
-        font-size: 1rem;
-    }
-
-    button.btn {
-        font-size: 1rem;
-    }
+    .login-form { width: 90%; padding: 20px; }
+    .login-form h2 { font-size: 1.8rem; }
 }
 </style>
 </head>
@@ -270,7 +140,7 @@ button.btn:hover {
     <!-- Background Video -->
     <div class="video-background">
         <video autoplay muted loop id="bg-video">
-            <!-- Make sure this video path is correct relative to your project structure -->
+            <!-- Ensure this path is correct -->
             <source src="assets/video/back.mp4" type="video/mp4">
             Your browser does not support the video tag.
         </video>
@@ -288,7 +158,7 @@ button.btn:hover {
                 </p>
             <?php endif; ?>
 
-            <!-- FIX: Action is empty so it submits to itself (login.php) -->
+            <!-- FIX: Action is empty so it submits to THIS FILE (login.php) -->
             <form action="" method="POST">
                 <div class="form-group">
                     <label for="email">Email</label>
