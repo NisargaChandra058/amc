@@ -18,7 +18,7 @@ if (isset($_SESSION['user_id']) && isset($_SESSION['role'])) {
 }
 
 // Load DB config — should define either $pdo (PDO) or $conn (mysqli) or DB_* constants
-require_once __DIR__ . '/db-config.php';
+require_once __DIR__ . '/db.php';
 
 // DB detection / fallback logic
 $db_type = null;
@@ -64,7 +64,7 @@ if ($db_type === null) {
     // Show a simple HTML explaining what's missing
     header('Content-Type: text/html; charset=utf-8');
     echo "<h2>Database connection not configured</h2>";
-    echo "<p><strong>db-config.php</strong> must define either <code>\$pdo</code> (PDO) or <code>\$conn</code> (mysqli), or set DB_HOST/DB_NAME/DB_USER/DB_PASS for auto-creation.</p>";
+    echo "<p><strong>db.php</strong> must define either <code>\$pdo</code> (PDO) or <code>\$conn</code> (mysqli), or set DB_HOST/DB_NAME/DB_USER/DB_PASS for auto-creation.</p>";
     echo "<p>Example PDO snippet for db-config.php:</p><pre>\$pdo = new PDO('mysql:host=localhost;dbname=mydb;charset=utf8mb4','dbuser','dbpass');</pre>";
     exit;
 }
@@ -361,3 +361,4 @@ h1, h2, h3, h4 {
     </div>
 </body>
 </html>
+
