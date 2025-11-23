@@ -5,19 +5,18 @@
  */
 
 // =================================================================
-// 1. PASTE YOUR NEON CONNECTION STRING HERE
-// It looks like: postgres://user:pass@ep-xyz.neon.tech/neondb
+// CREDENTIALS UPDATED
 // =================================================================
-$database_url = "psql 'postgresql://neondb_owner:npg_STKDhH8lomb7@ep-steep-grass-a4zzp7i4-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require'"; 
+$database_url = "postgresql://neondb_owner:npg_STKDhH8lomb7@ep-steep-grass-a4zzp7i4-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require";
 
-// Use Environment variable if available (for production), otherwise use the string above
+// Use Environment variable if available (for production)
 if (getenv('DATABASE_URL')) {
     $database_url = getenv('DATABASE_URL');
 }
 
 // Parse the connection string
-if (empty($database_url) || strpos($database_url, 'postgres://') === false) {
-    die("❌ Error: Please paste your Neon connection string into db.php on line 11.");
+if (empty($database_url) || (strpos($database_url, 'postgres://') === false && strpos($database_url, 'postgresql://') === false)) {
+    die("❌ Error: Invalid connection string in db.php");
 }
 
 $db_parts = parse_url($database_url);
@@ -33,7 +32,6 @@ $dsn = "pgsql:host=$host;port=$port;dbname=$dbname;sslmode=require";
  */
 function run_migration($pdo, $migration_id, $sql) {
     try {
-        // Check if migration exists
         $stmt = $pdo->prepare("SELECT 1 FROM db_migrations WHERE migration_id = ?");
         $stmt->execute([$migration_id]);
         
@@ -41,7 +39,6 @@ function run_migration($pdo, $migration_id, $sql) {
             return; // Already run
         }
 
-        // Run migration
         $pdo->beginTransaction();
         $pdo->exec($sql);
         $log = $pdo->prepare("INSERT INTO db_migrations (migration_id) VALUES (?)");
@@ -50,11 +47,9 @@ function run_migration($pdo, $migration_id, $sql) {
         
     } catch (PDOException $e) {
         $pdo->rollBack();
-        // Ignore "already exists" errors to prevent crashing on re-runs
         if (!in_array($e->getCode(), ['42P07', '42701', '23505', '42710'])) {
             throw $e; 
         } else {
-            // Mark as run if it existed but wasn't logged
             $log = $pdo->prepare("INSERT INTO db_migrations (migration_id) VALUES (?) ON CONFLICT DO NOTHING");
             $log->execute([$migration_id]);
         }
@@ -65,6 +60,9 @@ try {
     $pdo = new PDO($dsn, $user, $password);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+    
+    // CRITICAL FIX FOR NEON POOLER: Disable server-side prepares
+    $pdo->setAttribute(PDO::ATTR_EMULATE_PREPARES, true); 
 
     // --- 1. Setup Migrations Table ---
     $pdo->exec("CREATE TABLE IF NOT EXISTS db_migrations (
@@ -72,7 +70,7 @@ try {
         run_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );");
 
-    // --- 2. Run Migrations (Your Schema) ---
+    // --- 2. Run Migrations ---
     
     // Basic Tables
     run_migration($pdo, 'create_table_students', "CREATE TABLE IF NOT EXISTS students (id SERIAL PRIMARY KEY, student_id_text VARCHAR(20) UNIQUE);");
