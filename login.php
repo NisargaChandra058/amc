@@ -1,7 +1,160 @@
 <?php
+// login.php — combined presentation + POST handler
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+// Optional: set custom session folder if your app uses one
+// session_save_path('/var/www/sessions');
+
 session_start();
-?>
-<!DOCTYPE html>
+
+// If already logged in redirect to appropriate dashboard
+if (isset($_SESSION['user_id']) && isset($_SESSION['role'])) {
+    $role = $_SESSION['role'];
+    if ($role === 'admin') header('Location: admin-dashboard.php');
+    elseif ($role === 'student') header('Location: student-dashboard.php');
+    else header('Location: dashboard.php');
+    exit;
+}
+
+// Load DB config — should define either $pdo (PDO) or $conn (mysqli) or DB_* constants
+require_once __DIR__ . '/db-config.php';
+
+// DB detection / fallback logic
+$db_type = null;
+$pdo = $pdo ?? null;
+$conn = $conn ?? null;
+
+if (isset($pdo) && $pdo instanceof PDO) {
+    $db_type = 'pdo';
+} elseif (isset($conn) && $conn instanceof mysqli) {
+    $db_type = 'mysqli';
+} else {
+    // Try to build PDO from common vars/constants
+    $host = defined('DB_HOST') ? DB_HOST : ($db_host ?? null);
+    $name = defined('DB_NAME') ? DB_NAME : ($db_name ?? null);
+    $user = defined('DB_USER') ? DB_USER : ($db_user ?? null);
+    $pass = defined('DB_PASS') ? DB_PASS : ($db_pass ?? null);
+
+    if ($host && $name && $user) {
+        try {
+            $dsn = "mysql:host={$host};dbname={$name};charset=utf8mb4";
+            $pdo = new PDO($dsn, $user, $pass, [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            ]);
+            $db_type = 'pdo';
+        } catch (PDOException $e) {
+            try {
+                $dsn = "pgsql:host={$host};dbname={$name}";
+                $pdo = new PDO($dsn, $user, $pass, [
+                    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                ]);
+                $db_type = 'pdo';
+            } catch (PDOException $e2) {
+                $pdo = null;
+            }
+        }
+    }
+}
+
+// If still no DB connection, show clear message
+if ($db_type === null) {
+    // Show a simple HTML explaining what's missing
+    header('Content-Type: text/html; charset=utf-8');
+    echo "<h2>Database connection not configured</h2>";
+    echo "<p><strong>db-config.php</strong> must define either <code>\$pdo</code> (PDO) or <code>\$conn</code> (mysqli), or set DB_HOST/DB_NAME/DB_USER/DB_PASS for auto-creation.</p>";
+    echo "<p>Example PDO snippet for db-config.php:</p><pre>\$pdo = new PDO('mysql:host=localhost;dbname=mydb;charset=utf8mb4','dbuser','dbpass');</pre>";
+    exit;
+}
+
+// Initialize variables for form
+$error = '';
+$email = '';
+
+// Handle POST in same file
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $email = trim((string)($_POST['email'] ?? ''));
+    $password = (string)($_POST['password'] ?? '');
+
+    if ($email === '' || $password === '') {
+        $error = "Please enter both email and password.";
+    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $error = "Please enter a valid email address.";
+    } else {
+        if ($db_type === 'pdo') {
+            try {
+                $stmt = $pdo->prepare("SELECT id, first_name, surname, password, role FROM users WHERE email = :email LIMIT 1");
+                $stmt->execute([':email' => $email]);
+                $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+                if ($row && isset($row['password']) && password_verify($password, $row['password'])) {
+                    // success
+                    session_regenerate_id(true);
+                    $_SESSION['user_id'] = (int)$row['id'];
+                    $_SESSION['role'] = $row['role'] ?? 'user';
+                    $_SESSION['name'] = trim(($row['first_name'] ?? '') . ' ' . ($row['surname'] ?? ''));
+                    // redirect by role
+                    if ($_SESSION['role'] === 'admin') {
+                        header('Location: admin-dashboard.php');
+                        exit;
+                    } elseif ($_SESSION['role'] === 'student') {
+                        header('Location: student-dashboard.php');
+                        exit;
+                    } else {
+                        header('Location: dashboard.php');
+                        exit;
+                    }
+                } else {
+                    $error = "Invalid email or password.";
+                }
+            } catch (PDOException $e) {
+                error_log("Login PDO error: " . $e->getMessage());
+                $error = "An internal error occurred. Please try again later.";
+            }
+        } else {
+            // mysqli path
+            $stmt = $conn->prepare("SELECT id, first_name, surname, password, role FROM users WHERE email = ? LIMIT 1");
+            if ($stmt === false) {
+                error_log("MySQLi prepare error: " . $conn->error);
+                $error = "Database error. Contact admin.";
+            } else {
+                $stmt->bind_param('s', $email);
+                if (! $stmt->execute()) {
+                    error_log("MySQLi execute error: " . $stmt->error);
+                    $error = "Database error. Contact admin.";
+                } else {
+                    $res = $stmt->get_result();
+                    $row = $res->fetch_assoc();
+                    if ($row && isset($row['password']) && password_verify($password, $row['password'])) {
+                        session_regenerate_id(true);
+                        $_SESSION['user_id'] = (int)$row['id'];
+                        $_SESSION['role'] = $row['role'] ?? 'user';
+                        $_SESSION['name'] = trim(($row['first_name'] ?? '') . ' ' . ($row['surname'] ?? ''));
+                        $stmt->close();
+                        if ($_SESSION['role'] === 'admin') {
+                            header('Location: admin-dashboard.php');
+                            exit;
+                        } elseif ($_SESSION['role'] === 'student') {
+                            header('Location: student-dashboard.php');
+                            exit;
+                        } else {
+                            header('Location: dashboard.php');
+                            exit;
+                        }
+                    } else {
+                        $error = "Invalid email or password.";
+                    }
+                }
+                $stmt->close();
+            }
+        }
+    }
+}
+
+// HTML form (keeps original styling)
+?><!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -175,7 +328,7 @@ h1, h2, h3, h4 {
 <body>
     <!-- Background Video -->
     <div class="video-background">
-        <video autoplay muted loop id="bg-video">
+        <video autoplay muted loop id="bg-video" playsinline>
             <!-- NOTE: Make sure this video path is correct relative to your project structure -->
             <source src="assets/video/back.mp4" type="video/mp4">
             Your browser does not support the video tag.
@@ -187,24 +340,14 @@ h1, h2, h3, h4 {
         <div class="login-form">
             <h2>Login</h2>
             
-            <form action="login-action.php" method="POST">
+            <?php if ($error): ?>
+                <p style="color: #ff4d4d; text-align: center; font-weight: bold; margin-bottom: 15px;"><?= htmlspecialchars($error) ?></p>
+            <?php endif; ?>
 
-                <!-- START: ERROR MESSAGE DISPLAY -->
-                <?php
-                // Check if an error message is set in the session
-                if (isset($_SESSION['error'])) {
-                    // Display the error message in red
-                    echo '<p style="color: #ff4d4d; text-align: center; font-weight: bold; margin-bottom: 15px;">' . htmlspecialchars($_SESSION['error']) . '</p>';
-                    
-                    // Unset the error so it doesn't show again on refresh
-                    unset($_SESSION['error']);
-                }
-                ?>
-                <!-- END: ERROR MESSAGE DISPLAY -->
-
+            <form action="login.php" method="POST">
                 <div class="form-group">
                     <label for="email">Email</label>
-                    <input type="email" id="email" name="email" required>
+                    <input type="email" id="email" name="email" required value="<?= htmlspecialchars($email) ?>">
                 </div>
                 <div class="form-group">
                     <label for="password">Password</label>
