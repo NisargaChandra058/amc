@@ -31,6 +31,7 @@ if (isset($_SESSION['user_id']) && isset($_SESSION['role'])) {
             header('Location: principal-panel.php');
             exit;
         default:
+            // If role is unknown, send to index or logout
             header('Location: index.php'); 
             exit;
     }
