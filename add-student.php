@@ -324,6 +324,11 @@ function render_bulk_result($res) {
                 - Date format should be YYYY-MM-DD (ISO) to be safely inserted into DATE column.</p>
 
                 <button class="btn" type="submit">Upload CSV</button>
+                <!-- Button to download an existing CSV file -->
+<a href="sample.csv" download>
+  <button class="btn" type="button">Download CSV</button>
+</a>
+
             </form>
 
             <?php
