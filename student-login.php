@@ -14,7 +14,7 @@ if (isset($_SESSION['user_id']) && isset($_SESSION['role']) && $_SESSION['role']
 
 // Load DB config — your file should define either $pdo (PDO) or $conn (mysqli)
 // or define DB_HOST, DB_NAME, DB_USER, DB_PASS (or $db_host, $db_name, $db_user, $db_pass)
-require_once __DIR__ . '/db-config.php';
+require_once __DIR__ . '/db.php';
 
 // --- DB detection / fallback logic ---
 $db_type = null; // 'pdo' or 'mysqli'
@@ -83,9 +83,9 @@ if ($db_type === null) {
 
     header('Content-Type: text/html; charset=utf-8');
     echo "<h2>Database configuration not found</h2>";
-    echo "<p>Your <code>db-config.php</code> did not provide a <code>\$pdo</code> (PDO) or <code>\$conn</code> (mysqli) connection, and automatic connection attempt failed.</p>";
+    echo "<p>Your <code>db.php</code> did not provide a <code>\$pdo</code> (PDO) or <code>\$conn</code> (mysqli) connection, and automatic connection attempt failed.</p>";
     echo "<p>Either:</p><ol>
-        <li>Make <code>db-config.php</code> create a PDO instance: <code>\$pdo = new PDO(...)</code></li>
+        <li>Make <code>db.php</code> create a PDO instance: <code>\$pdo = new PDO(...)</code></li>
         <li>Or create a mysqli connection: <code>\$conn = new mysqli(...)</code></li>
     </ol>";
     echo "<p>Example <strong>PDO</strong> content for <code>db-config.php</code> (MySQL):</p>";
@@ -223,3 +223,4 @@ button{width:100%;padding:12px;border:none;border-radius:6px;background:#007bff;
 </div>
 </body>
 </html>
+
