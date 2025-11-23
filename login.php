@@ -11,7 +11,7 @@ session_start();
 // If already logged in redirect to appropriate dashboard
 if (isset($_SESSION['user_id']) && isset($_SESSION['role'])) {
     $role = $_SESSION['role'];
-    if ($role === 'admin') header('Location: admin-dashboard.php');
+    if ($role === 'admin') header('Location: admin-panel.php');
     elseif ($role === 'student') header('Location: student-dashboard.php');
     else header('Location: dashboard.php');
     exit;
@@ -97,7 +97,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['name'] = trim(($row['first_name'] ?? '') . ' ' . ($row['surname'] ?? ''));
                     // redirect by role
                     if ($_SESSION['role'] === 'admin') {
-                        header('Location: admin-dashboard.php');
+                        header('Location: admin-panel.php');
                         exit;
                     } elseif ($_SESSION['role'] === 'student') {
                         header('Location: student-dashboard.php');
@@ -134,7 +134,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $_SESSION['name'] = trim(($row['first_name'] ?? '') . ' ' . ($row['surname'] ?? ''));
                         $stmt->close();
                         if ($_SESSION['role'] === 'admin') {
-                            header('Location: admin-dashboard.php');
+                            header('Location: admin-panel.php');
                             exit;
                         } elseif ($_SESSION['role'] === 'student') {
                             header('Location: student-dashboard.php');
@@ -361,4 +361,5 @@ h1, h2, h3, h4 {
     </div>
 </body>
 </html>
+
 
