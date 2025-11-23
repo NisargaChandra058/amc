@@ -1,5 +1,100 @@
 <?php
+/**
+ * Universal Login Page (login.php)
+ * Handles authentication for Admin, Student, Staff, HOD, and Principal.
+ */
+
 session_start();
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+// Include your secure Neon database connection
+require_once __DIR__ . '/db.php';
+
+// 1. Middleware: If already logged in, redirect based on role
+if (isset($_SESSION['user_id']) && isset($_SESSION['role'])) {
+    $role = $_SESSION['role'];
+    switch ($role) {
+        case 'admin':
+            header('Location: admin-panel.php');
+            exit;
+        case 'student':
+            header('Location: student-dashboard.php');
+            exit;
+        case 'staff':
+            header('Location: staff-panel.php');
+            exit;
+        case 'HOD':
+            header('Location: hod-panel.php');
+            exit;
+        case 'principal':
+            header('Location: principal-panel.php');
+            exit;
+        default:
+            header('Location: index.php'); 
+            exit;
+    }
+}
+
+$error = '';
+$email = '';
+
+// 2. Handle Login Form Submission
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $email = trim($_POST['email'] ?? '');
+    $password = $_POST['password'] ?? '';
+
+    if (empty($email) || empty($password)) {
+        $error = "Please enter both email and password.";
+    } else {
+        try {
+            // Prepare SQL to find user by email
+            // We explicitly select 'role' to know where to redirect them
+            $stmt = $pdo->prepare("SELECT id, first_name, surname, password, role FROM users WHERE email = :email LIMIT 1");
+            $stmt->execute(['email' => $email]);
+            $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            // Verify User and Password
+            if ($user && password_verify($password, $user['password'])) {
+                
+                // Login Success: Set Session Variables
+                session_regenerate_id(true); // Security best practice
+                $_SESSION['user_id'] = $user['id'];
+                $_SESSION['role'] = $user['role'];
+                $_SESSION['name'] = $user['first_name'] . ' ' . $user['surname'];
+
+                // 3. REDIRECT BASED ON ROLE
+                switch ($user['role']) {
+                    case 'admin':
+                        header('Location: admin-panel.php');
+                        exit;
+                    case 'student':
+                        header('Location: student-dashboard.php');
+                        exit;
+                    case 'staff':
+                        header('Location: staff-panel.php');
+                        exit;
+                    case 'HOD':
+                        header('Location: hod-panel.php');
+                        exit;
+                    case 'principal':
+                        header('Location: principal-panel.php');
+                        exit;
+                    default:
+                        // Fallback if role is unknown
+                        $_SESSION['error'] = "Login Successful, but your role is undefined.";
+                        session_destroy(); 
+                        header('Location: login.php');
+                        exit;
+                }
+            } else {
+                $error = "Invalid email or password.";
+            }
+        } catch (PDOException $e) {
+            $error = "System Error: " . $e->getMessage();
+        }
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -77,6 +172,7 @@ a:hover {
 .login-form h2 {
     margin-bottom: 20px;
     font-size: 2rem;
+    color: #fff; /* Ensure title is white on dark background */
 }
 
 .form-group {
@@ -167,16 +263,13 @@ button.btn:hover {
         font-size: 1rem;
     }
 }
-h1, h2, h3, h4 {
-    color: #f4f4f9;
-}
 </style>
 </head>
 <body>
     <!-- Background Video -->
     <div class="video-background">
         <video autoplay muted loop id="bg-video">
-            <!-- NOTE: Make sure this video path is correct relative to your project structure -->
+            <!-- Make sure this video path is correct relative to your project structure -->
             <source src="assets/video/back.mp4" type="video/mp4">
             Your browser does not support the video tag.
         </video>
@@ -187,24 +280,18 @@ h1, h2, h3, h4 {
         <div class="login-form">
             <h2>Login</h2>
             
-            <form action="login-action.php" method="POST">
+            <!-- Error Message Display -->
+            <?php if ($error): ?>
+                <p style="color: #ff4d4d; text-align: center; font-weight: bold; margin-bottom: 15px; background: rgba(0,0,0,0.5); padding: 5px; border-radius: 4px;">
+                    <?= htmlspecialchars($error) ?>
+                </p>
+            <?php endif; ?>
 
-                <!-- START: ERROR MESSAGE DISPLAY -->
-                <?php
-                // Check if an error message is set in the session
-                if (isset($_SESSION['error'])) {
-                    // Display the error message in red
-                    echo '<p style="color: #ff4d4d; text-align: center; font-weight: bold; margin-bottom: 15px;">' . htmlspecialchars($_SESSION['error']) . '</p>';
-                    
-                    // Unset the error so it doesn't show again on refresh
-                    unset($_SESSION['error']);
-                }
-                ?>
-                <!-- END: ERROR MESSAGE DISPLAY -->
-
+            <!-- FIX: Action is empty so it submits to itself (login.php) -->
+            <form action="" method="POST">
                 <div class="form-group">
                     <label for="email">Email</label>
-                    <input type="email" id="email" name="email" required>
+                    <input type="email" id="email" name="email" value="<?= htmlspecialchars($email) ?>" required>
                 </div>
                 <div class="form-group">
                     <label for="password">Password</label>
@@ -212,6 +299,7 @@ h1, h2, h3, h4 {
                 </div>
                 <button type="submit" class="btn">Login</button>
             </form>
+            
             <p class="register-link">Don't have an account? <a href="register.php">Register here</a></p>
             <p class="forgot-password"><a href="forgot-password.php">Forgot Password?</a></p>
         </div>
