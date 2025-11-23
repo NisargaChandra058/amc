@@ -12,55 +12,90 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['allocate_subject'])) 
     // Validate and sanitize numeric inputs
     $staff_id   = filter_input(INPUT_POST, 'staff_id', FILTER_VALIDATE_INT);
     $subject_id = filter_input(INPUT_POST, 'subject_id', FILTER_VALIDATE_INT);
-    $class_id   = filter_input(INPUT_POST, 'class_id', FILTER_VALIDATE_INT);
+    $section_raw = $_POST['section'] ?? '';
+    $section = trim((string)$section_raw);
+    if ($section === '') $section = null; // treat empty as NULL
 
-    if ($staff_id && $subject_id && $class_id) {
+    // Basic checks
+    if (!$staff_id || !$subject_id) {
+        $message = "<p class='message error'>Invalid input. Please select a subject and staff member.</p>";
+    } else {
         try {
-            // Ensure your table has a suitable unique/index on (staff_id, subject_id, class_id)
-            $sql = "INSERT INTO subject_allocation (staff_id, subject_id, class_id)
-                    VALUES (:staff_id, :subject_id, :class_id)
-                    ON CONFLICT (staff_id, subject_id, class_id) DO NOTHING";
+            // Check if 'section' column exists in subject_allocation table
+            $colStmt = $pdo->prepare("
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_schema = current_schema() 
+                  AND table_name = 'subject_allocation' 
+                  AND column_name = 'section'
+                LIMIT 1
+            ");
+            $colStmt->execute();
+            $hasSectionColumn = (bool)$colStmt->fetchColumn();
 
-            $stmt = $pdo->prepare($sql);
-            $stmt->execute([
-                ':staff_id'   => $staff_id,
-                ':subject_id' => $subject_id,
-                ':class_id'   => $class_id
-            ]);
+            if ($hasSectionColumn) {
+                // Insert only if not exists (matches same staff, subject and section)
+                $sql = "
+                  INSERT INTO subject_allocation (staff_id, subject_id, section)
+                  SELECT :staff_id, :subject_id, :section
+                  WHERE NOT EXISTS (
+                      SELECT 1 FROM subject_allocation
+                      WHERE staff_id = :staff_id AND subject_id = :subject_id
+                        AND ( (section IS NULL AND :section IS NULL) OR section = :section )
+                  )
+                ";
+                $stmt = $pdo->prepare($sql);
+                // bind section which may be NULL
+                $stmt->bindValue(':staff_id', $staff_id, PDO::PARAM_INT);
+                $stmt->bindValue(':subject_id', $subject_id, PDO::PARAM_INT);
+                if ($section === null) {
+                    $stmt->bindValue(':section', null, PDO::PARAM_NULL);
+                } else {
+                    $stmt->bindValue(':section', $section, PDO::PARAM_STR);
+                }
+                $stmt->execute();
 
-            if ($stmt->rowCount() > 0) {
-                $message = "<p class='message success'>Subject allocated successfully!</p>";
+                if ($stmt->rowCount() > 0) {
+                    $message = "<p class='message success'>Subject allocated successfully (with section)!</p>";
+                } else {
+                    $message = "<p class='message error'>This allocation already exists for the given staff/subject/section.</p>";
+                }
+
             } else {
-                $message = "<p class='message error'>This subject is already allocated to this staff for this class.</p>";
+                // No section column: insert only staff_id + subject_id if not exists
+                $sql = "
+                  INSERT INTO subject_allocation (staff_id, subject_id)
+                  SELECT :staff_id, :subject_id
+                  WHERE NOT EXISTS (
+                      SELECT 1 FROM subject_allocation
+                      WHERE staff_id = :staff_id AND subject_id = :subject_id
+                  )
+                ";
+                $stmt = $pdo->prepare($sql);
+                $stmt->bindValue(':staff_id', $staff_id, PDO::PARAM_INT);
+                $stmt->bindValue(':subject_id', $subject_id, PDO::PARAM_INT);
+                $stmt->execute();
+
+                if ($stmt->rowCount() > 0) {
+                    $message = "<p class='message success'>Subject allocated successfully!</p>";
+                } else {
+                    $message = "<p class='message error'>This allocation already exists for the given staff and subject.</p>";
+                }
             }
         } catch (PDOException $e) {
             // In production, log the error rather than showing raw message
             $message = "<p class='message error'>Database error: " . htmlspecialchars($e->getMessage()) . "</p>";
         }
-    } else {
-        $message = "<p class='message error'>Invalid input. Please select a class, subject and staff member.</p>";
     }
 }
 
 // --- Fetch Data for Dropdowns ---
+// We now load semesters and subjects (subjects filtered by semester in JS)
 try {
     // Semesters
     $sem_stmt = $pdo->query("SELECT id, name FROM semesters ORDER BY name");
     $semesters = $sem_stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Classes grouped by semester (map NULL -> 'unassigned' key)
-    $class_stmt = $pdo->query("SELECT id, name, semester_id FROM classes ORDER BY name");
-    $classes_by_semester = [];
-    while ($class = $class_stmt->fetch(PDO::FETCH_ASSOC)) {
-        $semKey = ($class['semester_id'] === null) ? 'unassigned' : (string)$class['semester_id'];
-        if (!isset($classes_by_semester[$semKey])) $classes_by_semester[$semKey] = [];
-        $classes_by_semester[$semKey][] = [
-            'id' => (int)$class['id'],
-            'name' => $class['name']
-        ];
-    }
-
-    // Subjects grouped by semester (map NULL -> 'unassigned')
+    // Subjects grouped by semester (map NULL -> 'unassigned' if needed)
     $subject_stmt = $pdo->query("
         SELECT id, name AS subject_name, subject_code, semester_id
         FROM subjects
@@ -87,7 +122,6 @@ try {
 }
 
 // JSON encode safely for JS consumption
-$classes_json  = json_encode($classes_by_semester, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_HEX_AMP);
 $subjects_json = json_encode($subjects_by_semester, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_HEX_AMP);
 ?>
 
@@ -102,7 +136,7 @@ $subjects_json = json_encode($subjects_by_semester, JSON_HEX_TAG|JSON_HEX_APOS|J
         body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; margin: 0; padding: 20px; background: var(--space-cadet); color: var(--antiflash-white); }
         .back-link { display: block; max-width: 860px; margin: 0 auto 20px auto; text-align: right; font-weight: bold; color: var(--antiflash-white); text-decoration: none; }
         .back-link:hover { text-decoration: underline; }
-        .container { max-width: 600px; margin: 20px auto; padding: 30px; background: rgba(141,153,174,0.08); border-radius: 15px; border: 1px solid rgba(141,153,174,0.12); }
+        .container { max-width: 640px; margin: 20px auto; padding: 30px; background: rgba(141,153,174,0.08); border-radius: 15px; border: 1px solid rgba(141,153,174,0.12); }
         h2 { text-align: center; margin-bottom: 20px; }
         form { display: flex; flex-direction: column; gap: 10px; }
         label { display: block; margin-bottom: 5px; font-weight: 600; }
@@ -135,12 +169,10 @@ $subjects_json = json_encode($subjects_by_semester, JSON_HEX_TAG|JSON_HEX_APOS|J
                 <option value="unassigned">-- Unassigned / No Semester --</option>
             </select>
 
-            <label for="class_id">Select Class / Section:</label>
-            <select name="class_id" id="class_id" required disabled>
-                <option value="">-- First Select a Semester --</option>
-            </select>
+            <label for="section">Enter Section (e.g., A, B, C) — input on this page:</label>
+            <input type="text" name="section" id="section" placeholder="Type section (e.g., A or A1) or leave blank" autocomplete="off" />
 
-            <label for="subject_id">Select Subject:</label>
+            <label for="subject_id">Select Subject (loaded by Semester):</label>
             <select name="subject_id" id="subject_id" required disabled>
                 <option value="">-- First Select a Semester --</option>
             </select>
@@ -157,16 +189,15 @@ $subjects_json = json_encode($subjects_by_semester, JSON_HEX_TAG|JSON_HEX_APOS|J
 
             <button type="submit" name="allocate_subject">Allocate Subject</button>
         </form>
+        <small class="note">Note: Sections are captured from this form. Subjects are loaded based on semester only.</small>
     </div>
 
     <script>
         // Data from server
-        const classesBySemester  = <?= $classes_json ?: '{}' ?>;
         const subjectsBySemester = <?= $subjects_json ?: '{}' ?>;
 
         // Elements
         const semesterSelect = document.getElementById('semester_id');
-        const classSelect    = document.getElementById('class_id');
         const subjectSelect  = document.getElementById('subject_id');
 
         // Utility to reset a select element
@@ -179,43 +210,22 @@ $subjects_json = json_encode($subjects_by_semester, JSON_HEX_TAG|JSON_HEX_APOS|J
         }
 
         // initialize
-        resetSelect(classSelect, '-- First Select a Semester --');
         resetSelect(subjectSelect, '-- First Select a Semester --');
-        classSelect.disabled = true;
         subjectSelect.disabled = true;
 
         // debug: show loaded data in console (remove in production)
-        console.log('classesBySemester:', classesBySemester);
         console.log('subjectsBySemester:', subjectsBySemester);
 
         semesterSelect.addEventListener('change', function() {
             const rawValue = this.value;
-            // Normalize to string keys: use 'unassigned' for the explicit unassigned option
             const selectedSemesterId = (rawValue === 'unassigned') ? 'unassigned' : String(rawValue);
 
-            // Reset selects
-            resetSelect(classSelect, '-- Select a Class --');
+            // Reset subject select
             resetSelect(subjectSelect, '-- Select a Subject --');
+            subjectSelect.disabled = !selectedSemesterId;
 
-            // Enable/disable selects
-            const enabled = !!selectedSemesterId;
-            classSelect.disabled = !enabled;
-            subjectSelect.disabled = !enabled;
-
-            // Populate classes
-            if (enabled && classesBySemester[selectedSemesterId] && classesBySemester[selectedSemesterId].length) {
-                classesBySemester[selectedSemesterId].forEach(function(cls) {
-                    const opt = document.createElement('option');
-                    opt.value = cls.id;
-                    opt.textContent = cls.name;
-                    classSelect.appendChild(opt);
-                });
-            } else if (enabled) {
-                resetSelect(classSelect, '-- No classes found for this semester --');
-            }
-
-            // Populate subjects
-            if (enabled && subjectsBySemester[selectedSemesterId] && subjectsBySemester[selectedSemesterId].length) {
+            // Populate subjects based on semester only
+            if (selectedSemesterId && subjectsBySemester[selectedSemesterId] && subjectsBySemester[selectedSemesterId].length) {
                 subjectsBySemester[selectedSemesterId].forEach(function(sub) {
                     const opt = document.createElement('option');
                     opt.value = sub.id;
@@ -223,16 +233,16 @@ $subjects_json = json_encode($subjects_by_semester, JSON_HEX_TAG|JSON_HEX_APOS|J
                     opt.textContent = code + sub.subject_name;
                     subjectSelect.appendChild(opt);
                 });
-            } else if (enabled) {
+            } else if (selectedSemesterId) {
                 resetSelect(subjectSelect, '-- No subjects found for this semester --');
             }
         });
 
-        // Optional: client-side validation before submit (ensures selects not disabled)
+        // Optional: client-side validation before submit
         document.getElementById('allocForm').addEventListener('submit', function(e) {
-            if (classSelect.disabled || subjectSelect.disabled) {
+            if (subjectSelect.disabled || subjectSelect.value === '') {
                 e.preventDefault();
-                alert('Please select a semester first so classes and subjects are loaded.');
+                alert('Please select a semester to load subjects, and select a subject.');
             }
         });
     </script>
